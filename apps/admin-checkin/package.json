@@ -8,6 +8,7 @@
     "expo-camera": "~56.0.8",
     "expo-constants": "~56.0.18",
     "expo-linking": "~56.0.14",
+    "expo-navigation-bar": "~56.0.3",
     "expo-secure-store": "~56.0.4",
     "expo-status-bar": "~56.0.4",
     "lucide-react-native": "^1.18.0",

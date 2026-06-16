@@ -11,7 +11,7 @@ import {
   demoTicketTypes,
 } from "@/lib/demo-data";
 import { ensureDefaultEmailTemplates } from "@/lib/email/templates";
-import { isServiceRoleConfigured } from "@/lib/env";
+import { isDemoModeEnabled, isServiceRoleConfigured } from "@/lib/env";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type {
   AccountTicketSummary,
@@ -33,31 +33,34 @@ import type {
 } from "@/lib/types";
 
 export async function getEvents(): Promise<EventSummary[]> {
-  if (!isServiceRoleConfigured()) return demoEvents;
+  if (!isServiceRoleConfigured()) return isDemoModeEnabled() ? demoEvents : [];
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase.from("events").select("*").order("starts_at");
-  if (error || !data || data.length === 0) return demoEvents;
+  if (error || !data || data.length === 0) return isDemoModeEnabled() ? demoEvents : [];
   return data as EventSummary[];
 }
 
 export async function getEventBySlug(slug: string): Promise<EventSummary | null> {
-  if (!isServiceRoleConfigured()) return demoEvents.find((event) => event.slug === slug) ?? null;
+  const demoEvent = demoEvents.find((event) => event.slug === slug) ?? null;
+  if (!isServiceRoleConfigured()) return isDemoModeEnabled() ? demoEvent : null;
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase.from("events").select("*").eq("slug", slug).maybeSingle();
-  if (error || !data) return demoEvents.find((event) => event.slug === slug) ?? null;
+  if (error || !data) return isDemoModeEnabled() ? demoEvent : null;
   return data as EventSummary;
 }
 
 export async function getEventById(id: string): Promise<EventSummary | null> {
-  if (!isServiceRoleConfigured()) return demoEvents.find((event) => event.id === id) ?? null;
+  const demoEvent = demoEvents.find((event) => event.id === id) ?? null;
+  if (!isServiceRoleConfigured()) return isDemoModeEnabled() ? demoEvent : null;
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase.from("events").select("*").eq("id", id).maybeSingle();
-  if (error || !data) return demoEvents.find((event) => event.id === id) ?? null;
+  if (error || !data) return isDemoModeEnabled() ? demoEvent : null;
   return data as EventSummary;
 }
 
 export async function getEventDays(eventId?: string): Promise<EventDaySummary[]> {
   if (!isServiceRoleConfigured()) {
+    if (!isDemoModeEnabled()) return [];
     return eventId ? demoEventDays.filter((day) => day.event_id === eventId) : demoEventDays;
   }
 
@@ -65,19 +68,26 @@ export async function getEventDays(eventId?: string): Promise<EventDaySummary[]>
   let query = supabase.from("event_days").select("*").order("sort_order");
   if (eventId) query = query.eq("event_id", eventId);
   const { data, error } = await query;
-  if (error || !data) return eventId ? demoEventDays.filter((day) => day.event_id === eventId) : demoEventDays;
+  if (error || !data) {
+    if (!isDemoModeEnabled()) return [];
+    return eventId ? demoEventDays.filter((day) => day.event_id === eventId) : demoEventDays;
+  }
   return data as EventDaySummary[];
 }
 
 export async function getSessions(eventId?: string): Promise<SessionSummary[]> {
   if (!isServiceRoleConfigured()) {
+    if (!isDemoModeEnabled()) return [];
     return eventId ? demoSessions.filter((session) => session.event_id === eventId) : demoSessions;
   }
   const supabase = createSupabaseAdminClient();
   let query = supabase.from("sessions").select("*").order("starts_at");
   if (eventId) query = query.eq("event_id", eventId);
   const { data, error } = await query;
-  if (error || !data) return eventId ? demoSessions.filter((session) => session.event_id === eventId) : demoSessions;
+  if (error || !data) {
+    if (!isDemoModeEnabled()) return [];
+    return eventId ? demoSessions.filter((session) => session.event_id === eventId) : demoSessions;
+  }
   return data.map((session) => ({
     ...session,
     event_day_id: session.event_day_id ?? null,
@@ -87,13 +97,17 @@ export async function getSessions(eventId?: string): Promise<SessionSummary[]> {
 
 export async function getTicketTypes(eventId?: string): Promise<TicketTypeSummary[]> {
   if (!isServiceRoleConfigured()) {
+    if (!isDemoModeEnabled()) return [];
     return eventId ? demoTicketTypes.filter((ticket) => ticket.event_id === eventId) : demoTicketTypes;
   }
   const supabase = createSupabaseAdminClient();
   let query = supabase.from("ticket_types").select("*").order("price");
   if (eventId) query = query.eq("event_id", eventId);
   const { data, error } = await query;
-  if (error || !data) return eventId ? demoTicketTypes.filter((ticket) => ticket.event_id === eventId) : demoTicketTypes;
+  if (error || !data) {
+    if (!isDemoModeEnabled()) return [];
+    return eventId ? demoTicketTypes.filter((ticket) => ticket.event_id === eventId) : demoTicketTypes;
+  }
   return enrichTicketTypesWithDayAccess(supabase, data);
 }
 
@@ -141,7 +155,7 @@ async function enrichTicketTypesWithDayAccess(
 }
 
 export async function getDiscountCodes(): Promise<DiscountCodeSummary[]> {
-  if (!isServiceRoleConfigured()) return demoDiscountCodes;
+  if (!isServiceRoleConfigured()) return isDemoModeEnabled() ? demoDiscountCodes : [];
 
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase
@@ -150,7 +164,7 @@ export async function getDiscountCodes(): Promise<DiscountCodeSummary[]> {
     .eq("organization_id", demoOrganizationId)
     .order("created_at", { ascending: false });
 
-  if (error || !data) return demoDiscountCodes;
+  if (error || !data) return isDemoModeEnabled() ? demoDiscountCodes : [];
   if (data.length === 0) return [];
 
   const discountIds = data.map((discount) => discount.id);
@@ -179,15 +193,15 @@ export async function getDiscountCodes(): Promise<DiscountCodeSummary[]> {
 }
 
 export async function getAttendees(): Promise<AttendeeSummary[]> {
-  if (!isServiceRoleConfigured()) return demoAttendees;
+  if (!isServiceRoleConfigured()) return isDemoModeEnabled() ? demoAttendees : [];
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase.from("attendees").select("*").order("last_registered_at", { ascending: false });
-  if (error || !data) return demoAttendees;
+  if (error || !data) return isDemoModeEnabled() ? demoAttendees : [];
   return data as AttendeeSummary[];
 }
 
 export async function getAttendeeById(id: string): Promise<AttendeeDetail | null> {
-  if (!isServiceRoleConfigured()) return demoAttendeeDetail(id);
+  if (!isServiceRoleConfigured()) return isDemoModeEnabled() ? demoAttendeeDetail(id) : null;
 
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase.from("attendees").select("*").eq("id", id).maybeSingle();
@@ -196,7 +210,7 @@ export async function getAttendeeById(id: string): Promise<AttendeeDetail | null
 }
 
 export async function getAttendeeEventTickets(attendeeId: string): Promise<AttendeeEventTicket[]> {
-  if (!isServiceRoleConfigured()) return demoAttendeeEventTickets(attendeeId);
+  if (!isServiceRoleConfigured()) return isDemoModeEnabled() ? demoAttendeeEventTickets(attendeeId) : [];
 
   const supabase = createSupabaseAdminClient();
   const { data: registrations, error } = await supabase
@@ -326,7 +340,7 @@ export async function getEmailTemplates(organizationId: string): Promise<EmailTe
 }
 
 export async function getEventAttendees(eventId: string): Promise<EventAttendeeSummary[]> {
-  if (!isServiceRoleConfigured()) return demoEventAttendees(eventId);
+  if (!isServiceRoleConfigured()) return isDemoModeEnabled() ? demoEventAttendees(eventId) : [];
 
   const supabase = createSupabaseAdminClient();
   const { data: registrations, error } = await supabase
@@ -430,7 +444,17 @@ export async function getEventAttendees(eventId: string): Promise<EventAttendeeS
 }
 
 export async function getDashboardMetrics(): Promise<DashboardMetrics> {
-  if (!isServiceRoleConfigured()) return demoMetrics;
+  if (!isServiceRoleConfigured()) return isDemoModeEnabled() ? demoMetrics : {
+    upcomingEvents: 0,
+    activePublishedEvents: 0,
+    totalRegistered: 0,
+    totalCheckedIn: 0,
+    checkInPercentage: 0,
+    repeatAttendeeRate: 0,
+    smsConsentRate: 0,
+    smsDelivered: 0,
+    smsFailed: 0,
+  };
 
   const supabase = createSupabaseAdminClient();
   const [{ count: eventCount }, { count: registrationCount }, { count: attendanceCount }, { count: consentCount }] =
@@ -466,7 +490,7 @@ export async function getAnalyticsData() {
 }
 
 export async function getAccountTickets(email: string | null): Promise<AccountTicketSummary[]> {
-  if (!isServiceRoleConfigured()) return demoAccountTickets();
+  if (!isServiceRoleConfigured()) return isDemoModeEnabled() ? demoAccountTickets() : [];
   if (!email) return [];
 
   const normalizedEmail = email.trim().toLowerCase();
@@ -540,7 +564,7 @@ export async function getAccountTickets(email: string | null): Promise<AccountTi
 }
 
 export async function getTicketDetails(ticketCode: string): Promise<TicketDetails | null> {
-  if (!isServiceRoleConfigured()) return demoTicketDetails(ticketCode);
+  if (!isServiceRoleConfigured()) return isDemoModeEnabled() ? demoTicketDetails(ticketCode) : null;
 
   const supabase = createSupabaseAdminClient();
   const { data: ticketData, error: ticketError } = await supabase
@@ -647,6 +671,8 @@ export async function getTicketDetails(ticketCode: string): Promise<TicketDetail
 
 export async function getManagedUsers(): Promise<ManagedUserSummary[]> {
   if (!isServiceRoleConfigured()) {
+    if (!isDemoModeEnabled()) return [];
+
     return [
       {
         user_id: "77777777-7777-4777-8777-777777777771",

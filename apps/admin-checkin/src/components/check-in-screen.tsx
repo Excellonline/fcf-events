@@ -1,10 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { CameraView, useCameraPermissions } from "expo-camera";
+import * as SecureStore from "expo-secure-store";
 import {
   ActivityIndicator,
+  Animated,
+  Easing,
   Image,
   KeyboardAvoidingView,
+  Modal,
   Pressable,
   ScrollView,
   Text,
@@ -12,18 +16,27 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
-import type { TextInputProps } from "react-native";
+import type { StyleProp, TextInputProps, ViewStyle } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   Camera,
+  Crown,
   CheckCircle2,
   Clock3,
+  Eye,
+  EyeOff,
   Keyboard,
   LogOut,
   Mail,
+  NotebookPen,
   RefreshCw,
   Search,
+  Sparkles,
+  Star,
   TicketCheck,
+  Undo2,
   UserPlus,
+  Users,
   XCircle,
 } from "lucide-react-native";
 import type { LucideIcon } from "lucide-react-native";
@@ -50,18 +63,25 @@ import type {
 } from "@/lib/types";
 
 const colors = {
-  background: "#080909",
-  panel: "#111315",
-  panelAlt: "#181b1f",
-  border: "#2a2f35",
-  text: "#f7f7f4",
-  muted: "#a8adb4",
-  soft: "#d7d9dc",
-  red: "#e50913",
-  redDark: "#99070d",
+  background: "#05070c",
+  backgroundAlt: "#0b1020",
+  panel: "#0f1724",
+  panelAlt: "#151f31",
+  panelElevated: "#182235",
+  border: "#263348",
+  text: "#f8fbff",
+  muted: "#97a3b6",
+  soft: "#d9e4f2",
+  accent: "#2dd4bf",
+  accentDark: "#0f766e",
+  indigo: "#6366f1",
+  indigoDark: "#4338ca",
+  danger: "#fb7185",
   green: "#34d399",
   amber: "#fbbf24",
   blue: "#7dd3fc",
+  red: "#2dd4bf",
+  redDark: "#0f766e",
 };
 
 const emptyWalkUpForm: WalkUpFormState = {
@@ -75,14 +95,20 @@ const emptyWalkUpForm: WalkUpFormState = {
   paymentMode: "cash",
 };
 
+const rememberMeKey = "fcf-checkin-remember-me";
+const rememberedEmailKey = "fcf-checkin-email";
+
 export function CheckInScreen() {
   const { width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const [permission, requestPermission] = useCameraPermissions();
   const [authReady, setAuthReady] = useState(false);
   const [session, setSession] = useState<Session | null>(null);
   const [demoMode, setDemoMode] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [passwordVisible, setPasswordVisible] = useState(false);
+  const [rememberMe, setRememberMe] = useState(true);
   const [authMessage, setAuthMessage] = useState<string | null>(null);
   const [isSigningIn, setIsSigningIn] = useState(false);
   const [events, setEvents] = useState<EventSummary[]>([]);
@@ -96,6 +122,8 @@ export function CheckInScreen() {
   const [isLoadingContext, setIsLoadingContext] = useState(false);
   const [contextMessage, setContextMessage] = useState<string | null>(null);
   const [cameraActive, setCameraActive] = useState(false);
+  const [cameraMessage, setCameraMessage] = useState<string | null>(null);
+  const [cameraReady, setCameraReady] = useState(false);
   const [scanLocked, setScanLocked] = useState(false);
   const [ticketCode, setTicketCode] = useState("");
   const [result, setResult] = useState<CheckInResult | WalkUpCheckInResult | null>(null);
@@ -111,6 +139,8 @@ export function CheckInScreen() {
   const [isSearching, setIsSearching] = useState(false);
   const [walkUp, setWalkUp] = useState<WalkUpFormState>(emptyWalkUpForm);
   const [isAddingWalkUp, setIsAddingWalkUp] = useState(false);
+  const [manualEntryOpen, setManualEntryOpen] = useState(false);
+  const resultPulse = useRef(new Animated.Value(0)).current;
 
   const token = session?.access_token ?? null;
   const selectedEvent = useMemo(() => events.find((event) => event.id === eventId) ?? null, [eventId, events]);
@@ -212,11 +242,32 @@ export function CheckInScreen() {
       return undefined;
     }
 
-    supabase.auth.getSession().then(({ data }) => {
-      if (!mounted) return;
-      setSession(data.session);
-      setAuthReady(true);
-    });
+    async function prepareAuth() {
+      try {
+        const [savedRememberMe, savedEmail, sessionResult] = await Promise.all([
+          SecureStore.getItemAsync(rememberMeKey),
+          SecureStore.getItemAsync(rememberedEmailKey),
+          supabase!.auth.getSession(),
+        ]);
+
+        if (!mounted) return;
+
+        const shouldRemember = savedRememberMe !== "false";
+        setRememberMe(shouldRemember);
+        if (savedEmail) setEmail(savedEmail);
+
+        if (shouldRemember) {
+          setSession(sessionResult.data.session);
+        } else {
+          if (sessionResult.data.session) await supabase!.auth.signOut();
+          if (mounted) setSession(null);
+        }
+      } finally {
+        if (mounted) setAuthReady(true);
+      }
+    }
+
+    void prepareAuth();
 
     const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       if (mounted) setSession(nextSession);
@@ -246,6 +297,12 @@ export function CheckInScreen() {
   }, [eventDayId, eventDayOptions]);
 
   useEffect(() => {
+    if (!sessionId) return;
+    if (eventSessions.some((sessionItem) => sessionItem.id === sessionId)) return;
+    setSessionId("");
+  }, [eventSessions, sessionId]);
+
+  useEffect(() => {
     setWalkUp((current) => {
       if (eventTicketTypes.some((ticketType) => ticketType.id === current.ticketTypeId)) return current;
       return {
@@ -255,6 +312,18 @@ export function CheckInScreen() {
     });
   }, [eventTicketTypes]);
 
+  useEffect(() => {
+    if (!result) return;
+
+    resultPulse.setValue(0);
+    Animated.timing(resultPulse, {
+      duration: 260,
+      easing: Easing.out(Easing.cubic),
+      toValue: 1,
+      useNativeDriver: true,
+    }).start();
+  }, [result, resultPulse]);
+
   async function signIn() {
     if (!supabase) return;
     setIsSigningIn(true);
@@ -263,12 +332,19 @@ export function CheckInScreen() {
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
         email: email.trim().toLowerCase(),
-        password,
+        password: password.trim(),
       });
 
       if (error) {
         setAuthMessage(error.message);
         return;
+      }
+
+      await SecureStore.setItemAsync(rememberMeKey, rememberMe ? "true" : "false");
+      if (rememberMe) {
+        await SecureStore.setItemAsync(rememberedEmailKey, email.trim().toLowerCase());
+      } else {
+        await SecureStore.deleteItemAsync(rememberedEmailKey);
       }
 
       setSession(data.session);
@@ -288,11 +364,40 @@ export function CheckInScreen() {
     setTicketTypes([]);
     setAttendees([]);
     setResult(null);
+    setCameraActive(false);
+    setCameraReady(false);
+    setCameraMessage(null);
   }
 
   async function openDemoMode() {
     setDemoMode(true);
     await loadContext(null);
+  }
+
+  function closeCamera() {
+    setCameraActive(false);
+    setCameraReady(false);
+    setScanLocked(false);
+  }
+
+  async function startCamera() {
+    setCameraMessage(null);
+    setCameraReady(false);
+
+    if (!canCheckIn) {
+      setCameraMessage("Choose an event and day before scanning tickets.");
+      return;
+    }
+
+    if (!permission?.granted) {
+      const nextPermission = await requestPermission();
+      if (!nextPermission.granted) {
+        setCameraMessage("Camera permission is required to scan tickets.");
+        return;
+      }
+    }
+
+    setCameraActive(true);
   }
 
   const submitTicket = useCallback(
@@ -388,6 +493,22 @@ export function CheckInScreen() {
 
   const canCheckIn = Boolean(eventId && eventDayId);
   const notCheckedInCount = Math.max(attendees.length - checkedInCount, 0);
+  const isTabletLayout = width >= 760;
+  const cameraHeight = isTabletLayout ? 360 : 286;
+  const selectedScopeLabel = selectedSession?.title ?? "Event gate";
+  const selectedDayLabel = selectedEventDay?.label ?? "Daily admission";
+  const checkInRate = attendees.length ? Math.round((checkedInCount / attendees.length) * 100) : 0;
+  const resultScale = resultPulse.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.96, 1],
+  });
+  const panelGridStyle: StyleProp<ViewStyle> = isTabletLayout
+    ? { alignItems: "flex-start", flexDirection: "row", flexWrap: "wrap", gap: 16 }
+    : { gap: 16 };
+  const halfPanelStyle: StyleProp<ViewStyle> = isTabletLayout
+    ? { flexBasis: "48%", flexGrow: 1, minWidth: 330 }
+    : undefined;
+  const fullPanelStyle: StyleProp<ViewStyle> = isTabletLayout ? { flexBasis: "100%" } : undefined;
 
   if (!authReady) {
     return (
@@ -420,7 +541,7 @@ export function CheckInScreen() {
 
   if (hasSupabaseConfig && !session && !demoMode) {
     return (
-      <ScreenShell>
+      <ScreenShell maxWidth={680}>
         <View style={{ gap: 18, paddingTop: 14 }}>
           <SignInHeader />
           <Panel title="Admin Sign In" icon={TicketCheck}>
@@ -430,31 +551,41 @@ export function CheckInScreen() {
                 autoComplete="email"
                 inputMode="email"
                 onChangeText={setEmail}
-                placeholder="admin@example.com"
+                placeholder="login@fcf.events"
                 placeholderTextColor="#717780"
                 style={inputStyle}
                 value={email}
               />
             </Field>
             <Field label="Password">
-              <TextInput
-                autoCapitalize="none"
-                autoComplete="password"
-                onChangeText={setPassword}
-                placeholder="Password"
-                placeholderTextColor="#717780"
-                secureTextEntry
-                style={inputStyle}
-                value={password}
-              />
+              <View style={{ position: "relative" }}>
+                <TextInput
+                  autoCapitalize="none"
+                  autoComplete="password"
+                  onChangeText={setPassword}
+                  placeholder="Password"
+                  placeholderTextColor="#717780"
+                  secureTextEntry={!passwordVisible}
+                  style={[inputStyle, { paddingRight: 52 }]}
+                  value={password}
+                />
+                <PasswordToggleButton
+                  visible={passwordVisible}
+                  onPress={() => setPasswordVisible((current) => !current)}
+                />
+              </View>
             </Field>
+            <RememberMeToggle
+              active={rememberMe}
+              onPress={() => setRememberMe((current) => !current)}
+            />
             {authMessage ? (
               <Text selectable style={{ color: colors.amber, fontSize: 14, lineHeight: 20 }}>
                 {authMessage}
               </Text>
             ) : null}
             <ActionButton
-              disabled={!email.trim() || !password || isSigningIn}
+              disabled={!email.trim() || !password.trim() || isSigningIn}
               icon={Mail}
               label={isSigningIn ? "Signing In" : "Sign In"}
               onPress={signIn}
@@ -484,252 +615,242 @@ export function CheckInScreen() {
   }
 
   return (
-    <ScreenShell>
-      <View style={{ gap: 16 }}>
-        <View style={{ flexDirection: "row", gap: 12, justifyContent: "space-between" }}>
-          <View style={{ flex: 1 }}>
-            <Text selectable style={{ color: colors.muted, fontSize: 13 }}>
-              {selectedSession ? "Session check-in" : "Event check-in"}
-            </Text>
-            <Text selectable style={{ color: colors.text, fontSize: width > 420 ? 30 : 25, fontWeight: "800", marginTop: 4 }}>
-              {selectedEvent?.title ?? "Check-in"}
-            </Text>
-          </View>
-          <IconButton disabled={isLoadingContext} icon={LogOut} onPress={signOut} />
-        </View>
-
-        {contextMessage ? (
-          <StatusBanner tone="warning" text={contextMessage} />
-        ) : null}
-
-        <Panel title="Context" icon={TicketCheck}>
-          <OptionRail
-            items={events.map((event) => ({
-              label: event.title,
-              detail: formatEventDate(event.starts_at),
-              value: event.id,
-            }))}
-            onChange={(value) => {
-              setEventId(value);
-              setEventDayId(eventDays.find((day) => day.event_id === value)?.id ?? "");
-              setSessionId("");
-              setLookupResults([]);
-              setLookupMessage(null);
-              setResult(null);
-            }}
-            value={eventId}
+    <>
+      <ScreenShell>
+        {/* NEW SLEEK MODERN DESIGN - Material 3 inspired event check-in surface */}
+        <View style={{ gap: isTabletLayout ? 22 : 16 }}>
+          <StaffTopBar
+            checkedInCount={checkedInCount}
+            isLoading={isLoadingContext}
+            modeLabel={selectedSession ? "Seminar scan" : "Event gate"}
+            onRefresh={() => void refreshAttendees()}
+            onSignOut={signOut}
+            selectedEventTitle={selectedEvent?.title ?? "Choose event"}
+            selectedScopeLabel={selectedScopeLabel}
+            totalCount={attendees.length}
           />
-          <OptionRail
-            items={eventDayOptions.map((day) => ({
-              label: day.label,
-              detail: formatEventDate(day.starts_at),
-              value: day.id,
-            }))}
-            onChange={(value) => {
-              setEventDayId(value);
-              setSessionId("");
-              setLookupResults([]);
-              setLookupMessage(null);
-              setResult(null);
-            }}
-            value={eventDayId}
-          />
-          <OptionRail
-            items={[
-              { label: "Event gate", detail: selectedEventDay?.label ?? "Daily admission", value: "" },
-              ...eventSessions.map((sessionItem) => ({
-                label: sessionItem.title,
-                detail: sessionItem.room ?? "Session",
-                value: sessionItem.id,
-              })),
-            ]}
-            onChange={(value) => {
-              setSessionId(value);
-              setLookupResults([]);
-              setLookupMessage(null);
-              setResult(null);
-            }}
-            value={sessionId}
-          />
-        </Panel>
 
-        <Panel title="Scan Ticket" icon={Camera}>
-          <View
-            style={{
-              alignItems: "center",
-              backgroundColor: "#000",
-              borderColor: colors.border,
-              borderRadius: 8,
-              borderWidth: 1,
-              height: 286,
-              justifyContent: "center",
-              overflow: "hidden",
-            }}
-          >
-            {cameraActive && permission?.granted ? (
-              <CameraView
-                barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
-                facing="back"
-                onBarcodeScanned={
-                  scanLocked
-                    ? undefined
-                    : ({ data }) => {
-                        setScanLocked(true);
-                        setCameraActive(false);
-                        void submitTicket(data).finally(() => {
-                          setTimeout(() => setScanLocked(false), 900);
-                        });
-                      }
-                }
-                style={{ height: "100%", width: "100%" }}
-              />
-            ) : (
-              <View style={{ alignItems: "center", gap: 14, padding: 20 }}>
-                <Camera color={colors.red} size={42} />
-                {!permission?.granted ? (
-                  <ActionButton icon={Camera} label="Allow Camera" onPress={requestPermission} />
-                ) : (
-                  <ActionButton disabled={!canCheckIn || isCheckingIn} icon={Camera} label="Start Camera" onPress={() => setCameraActive(true)} />
-                )}
-              </View>
-            )}
-          </View>
-          <View style={{ gap: 10 }}>
-            <Field label="Ticket code">
-              <TextInput
-                autoCapitalize="characters"
-                autoCorrect={false}
-                onChangeText={setTicketCode}
-                onSubmitEditing={() => void submitTicket(ticketCode)}
-                placeholder="FCF-..."
-                placeholderTextColor="#717780"
-                style={inputStyle}
-                value={ticketCode}
+          {contextMessage ? (
+            <StatusBanner tone="warning" text={contextMessage} />
+          ) : null}
+
+          <Panel title="Event Command Center" icon={Sparkles} style={fullPanelStyle}>
+            <View style={{ flexDirection: isTabletLayout ? "row" : "column", flexWrap: "wrap", gap: 10 }}>
+              <SummaryPill label="Now scanning" value={selectedEvent?.title ?? "Choose an event"} emphasis />
+              <SummaryPill label="Day" value={selectedDayLabel} />
+              <SummaryPill label="Area" value={selectedScopeLabel} emphasis={Boolean(selectedSession)} />
+              <SummaryPill label="Progress" value={`${checkedInCount}/${attendees.length} (${checkInRate}%)`} />
+            </View>
+
+            <Field label="Quick event switcher">
+              <OptionRail
+                emptyText="No events are available for this scanner account."
+                items={events.map((event) => ({
+                  label: event.title,
+                  detail: formatEventDate(event.starts_at),
+                  value: event.id,
+                }))}
+                onChange={(value) => {
+                  setEventId(value);
+                  setEventDayId(eventDays.find((day) => day.event_id === value)?.id ?? "");
+                  setSessionId("");
+                  setLookupResults([]);
+                  setLookupMessage(null);
+                  setResult(null);
+                  setCameraActive(false);
+                }}
+                value={eventId}
               />
             </Field>
-            <ActionButton
-              disabled={!ticketCode.trim() || !canCheckIn || isCheckingIn}
-              icon={Keyboard}
-              label={isCheckingIn ? "Checking In" : "Check In"}
-              onPress={() => void submitTicket(ticketCode)}
-            />
-          </View>
-        </Panel>
+            <Field label="Check-in day">
+              <OptionRail
+                emptyText="No check-in days are configured for this event."
+                items={eventDayOptions.map((day) => ({
+                  label: day.label,
+                  detail: formatEventDate(day.starts_at),
+                  value: day.id,
+                }))}
+                onChange={(value) => {
+                  setEventDayId(value);
+                  setSessionId("");
+                  setLookupResults([]);
+                  setLookupMessage(null);
+                  setResult(null);
+                  setCameraActive(false);
+                }}
+                value={eventDayId}
+              />
+            </Field>
+            <Field label="Gate or seminar">
+              <OptionRail
+                items={[
+                  { label: "Event gate", detail: selectedDayLabel, value: "" },
+                  ...eventSessions.map((sessionItem) => ({
+                    label: sessionItem.title,
+                    detail: sessionItem.room ?? "Seminar",
+                    value: sessionItem.id,
+                  })),
+                ]}
+                onChange={(value) => {
+                  setSessionId(value);
+                  setLookupResults([]);
+                  setLookupMessage(null);
+                  setResult(null);
+                  setCameraActive(false);
+                }}
+                value={sessionId}
+              />
+            </Field>
+          </Panel>
 
-        <Panel title="Result" icon={resultIcon(result)}>
-          {result ? (
-            <View style={{ gap: 12 }}>
-              <StatusBanner tone={resultTone(result.result)} text={result.result.replaceAll("_", " ")} />
-              {statusMessage ? (
-                <Text selectable style={{ color: colors.soft, fontSize: 14, lineHeight: 20 }}>
-                  {statusMessage}
-                </Text>
-              ) : null}
-              {result.attendeeName ? (
-                <Text selectable style={{ color: colors.text, fontSize: 22, fontWeight: "800" }}>
-                  {result.attendeeName}
-                </Text>
-              ) : null}
-              {result.ticketTypeName ? (
-                <Text selectable style={{ color: colors.muted, fontSize: 15 }}>
-                  {result.ticketTypeName}
-                </Text>
-              ) : null}
-              {"ticketCode" in result && result.ticketCode ? (
-                <Text selectable style={{ color: colors.text, fontFamily: "monospace", fontSize: 14 }}>
-                  {result.ticketCode}
-                </Text>
-              ) : null}
-              {result.checkedInAt ? <InfoLine label="Checked in" value={formatDate(result.checkedInAt)} /> : null}
-              {result.priorCheckedInAt ? <InfoLine label="Prior check-in" value={formatDate(result.priorCheckedInAt)} /> : null}
-            </View>
-          ) : (
-            <Text selectable style={{ color: colors.muted, fontSize: 14, lineHeight: 20 }}>
-              No check-in result yet.
-            </Text>
-          )}
-        </Panel>
+          <View style={panelGridStyle}>
+            <Panel title="Live Scanner" icon={Camera} style={[halfPanelStyle, isTabletLayout ? { flexBasis: "58%", minWidth: 430 } : undefined]}>
+              <ScannerLaunchCard
+                cameraHeight={cameraHeight}
+                cameraMessage={cameraMessage}
+                canCheckIn={canCheckIn}
+                isCheckingIn={isCheckingIn}
+                onManualTicket={() => setManualEntryOpen(true)}
+                onOpenScanner={() => void startCamera()}
+                permissionGranted={permission?.granted}
+                selectedDayLabel={selectedDayLabel}
+                selectedEventTitle={selectedEvent?.title ?? "Choose an event"}
+                selectedSession={selectedSession}
+                selectedScopeLabel={selectedScopeLabel}
+              />
+              <QuickActionDock
+                onNote={() => setStatusMessage("Guest notes are managed from the attendee profile. Search the guest below to open the right record.")}
+                onUndo={() => {
+                  setResult(null);
+                  setTicketCode("");
+                  setStatusMessage("Last scan cleared.");
+                }}
+                onVip={() => {
+                  setAttendeeQuery("vip");
+                  setAttendeeFilter("all");
+                  setStatusMessage("VIP filter ready.");
+                }}
+              />
+            </Panel>
 
-        <Panel title="Attendees" icon={TicketCheck}>
-          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-            <CounterPill label="In" value={checkedInCount} tone="success" />
-            <CounterPill label="Not in" value={notCheckedInCount} tone="muted" />
-            <Pressable
-              disabled={isRefreshingAttendees}
-              onPress={() => void refreshAttendees()}
-              style={{
-                alignItems: "center",
-                backgroundColor: colors.panelAlt,
-                borderColor: colors.border,
-                borderRadius: 8,
-                borderWidth: 1,
-                flexDirection: "row",
-                gap: 6,
-                minHeight: 40,
-                paddingHorizontal: 12,
-              }}
-            >
-              <RefreshCw color={colors.soft} size={16} />
-              <Text style={{ color: colors.soft, fontSize: 13, fontWeight: "700" }}>
-                Refresh
-              </Text>
-            </Pressable>
-          </View>
-          <TextInput
-            autoCorrect={false}
-            onChangeText={setAttendeeQuery}
-            placeholder="Filter attendees"
-            placeholderTextColor="#717780"
-            style={inputStyle}
-            value={attendeeQuery}
-          />
-          <View style={{ flexDirection: "row", gap: 8 }}>
-            <FilterButton active={attendeeFilter === "all"} label="All" onPress={() => setAttendeeFilter("all")} />
-            <FilterButton active={attendeeFilter === "checked_in"} label="In" onPress={() => setAttendeeFilter("checked_in")} />
-            <FilterButton active={attendeeFilter === "not_checked_in"} label="Not In" onPress={() => setAttendeeFilter("not_checked_in")} />
-          </View>
-          <View style={{ gap: 10 }}>
-            {visibleAttendees.length ? (
-              visibleAttendees.map((attendee) => (
-                <AttendeeRow
-                  attendee={attendee}
-                  disabled={isCheckingIn}
-                  key={attendee.registration_id}
-                  onCheckIn={(code) => void submitTicket(code)}
-                />
-              ))
-            ) : (
-              <EmptyText text={attendees.length ? "No attendees match the current filters." : "No attendees are registered for this event."} />
-            )}
-          </View>
-        </Panel>
+            <Panel title="Instant Feedback" icon={resultIcon(result)} style={[halfPanelStyle, isTabletLayout ? { flexBasis: "38%", minWidth: 320 } : undefined]}>
+              <Animated.View style={{ transform: [{ scale: resultScale }] }}>
+                <PremiumResultCard result={result} statusMessage={statusMessage} />
+              </Animated.View>
+            </Panel>
 
-        <Panel title="Find Guest" icon={Search}>
-          <Field label="Guest lookup">
-            <TextInput
-              autoCorrect={false}
-              onChangeText={setLookupQuery}
-              onSubmitEditing={() => void runLookup()}
-              placeholder="Name, email, phone, or code"
-              placeholderTextColor="#717780"
-              style={inputStyle}
-              value={lookupQuery}
-            />
-          </Field>
-          <ActionButton disabled={!canCheckIn || isSearching} icon={Search} label={isSearching ? "Searching" : "Search"} onPress={() => void runLookup()} />
-          {lookupMessage ? (
-            <Text selectable style={{ color: colors.muted, fontSize: 14, lineHeight: 20 }}>
-              {lookupMessage}
-            </Text>
-          ) : null}
-          <View style={{ gap: 10 }}>
-            {lookupResults.map((guest) => (
-              <LookupRow disabled={isCheckingIn} guest={guest} key={guest.ticketId} onCheckIn={(code) => void submitTicket(code)} />
-            ))}
           </View>
-        </Panel>
 
-        <Panel title="Add Walk-up" icon={UserPlus}>
+          <View style={panelGridStyle}>
+            <Panel title="Attendee Flow" icon={Users} style={[halfPanelStyle, isTabletLayout ? { flexBasis: "58%", minWidth: 430 } : undefined]}>
+              <AttendeeStatsStrip checkedInCount={checkedInCount} checkInRate={checkInRate} notCheckedInCount={notCheckedInCount} />
+              <View style={{ alignItems: "center", flexDirection: "row", gap: 10 }}>
+                <View style={{ flex: 1 }}>
+                  <TextInput
+                    autoCorrect={false}
+                    onChangeText={setAttendeeQuery}
+                    placeholder="Search attendees, ticket code, company"
+                    placeholderTextColor="#717780"
+                    style={inputStyle}
+                    value={attendeeQuery}
+                  />
+                </View>
+                <Pressable
+                  disabled={isRefreshingAttendees}
+                  onPress={() => void refreshAttendees()}
+                  style={({ pressed }) => ({
+                    alignItems: "center",
+                    backgroundColor: pressed ? colors.panelElevated : colors.panelAlt,
+                    borderColor: colors.border,
+                    borderRadius: 18,
+                    borderWidth: 1,
+                    height: 56,
+                    justifyContent: "center",
+                    opacity: isRefreshingAttendees ? 0.55 : 1,
+                    width: 56,
+                  })}
+                >
+                  {isRefreshingAttendees ? <ActivityIndicator color={colors.accent} /> : <RefreshCw color={colors.soft} size={21} />}
+                </Pressable>
+              </View>
+              <View style={{ flexDirection: "row", gap: 8 }}>
+                <FilterButton active={attendeeFilter === "all"} label="All" onPress={() => setAttendeeFilter("all")} />
+                <FilterButton active={attendeeFilter === "checked_in"} label="In" onPress={() => setAttendeeFilter("checked_in")} />
+                <FilterButton active={attendeeFilter === "not_checked_in"} label="Waiting" onPress={() => setAttendeeFilter("not_checked_in")} />
+              </View>
+              <View style={{ gap: 10 }}>
+                {visibleAttendees.length ? (
+                  visibleAttendees.map((attendee) => (
+                    <AttendeeRow
+                      attendee={attendee}
+                      disabled={isCheckingIn}
+                      key={attendee.registration_id}
+                      onCheckIn={(code) => void submitTicket(code)}
+                    />
+                  ))
+                ) : (
+                  <EmptyText text={attendees.length ? "No attendees match the current filters." : "No attendees are registered for this event."} />
+                )}
+              </View>
+            </Panel>
+
+            <Panel title="Manual Ticket" icon={Keyboard} style={[halfPanelStyle, isTabletLayout ? { flexBasis: "38%", minWidth: 320 } : undefined]}>
+              <ActionButton
+                icon={Keyboard}
+                label={manualEntryOpen || isTabletLayout ? "Manual Entry Ready" : "Manual Ticket"}
+                onPress={() => setManualEntryOpen((current) => !current)}
+                variant={manualEntryOpen || isTabletLayout ? "secondary" : "primary"}
+              />
+              {manualEntryOpen || isTabletLayout ? (
+                <View style={{ gap: 12 }}>
+                  <Field label="Ticket code">
+                    <TextInput
+                      autoCapitalize="characters"
+                      autoCorrect={false}
+                      onChangeText={setTicketCode}
+                      onSubmitEditing={() => void submitTicket(ticketCode)}
+                      placeholder="FCF-..."
+                      placeholderTextColor="#717780"
+                      style={inputStyle}
+                      value={ticketCode}
+                    />
+                  </Field>
+                  <ActionButton
+                    disabled={!ticketCode.trim() || !canCheckIn || isCheckingIn}
+                    icon={TicketCheck}
+                    label={isCheckingIn ? "Checking In" : "Check In Ticket"}
+                    onPress={() => void submitTicket(ticketCode)}
+                  />
+                </View>
+              ) : null}
+              <View style={{ borderTopColor: colors.border, borderTopWidth: 1, gap: 12, paddingTop: 14 }}>
+                <Field label="Guest lookup">
+                  <TextInput
+                    autoCorrect={false}
+                    onChangeText={setLookupQuery}
+                    onSubmitEditing={() => void runLookup()}
+                    placeholder="Name, email, phone, or code"
+                    placeholderTextColor="#717780"
+                    style={inputStyle}
+                    value={lookupQuery}
+                  />
+                </Field>
+                <ActionButton disabled={!canCheckIn || isSearching} icon={Search} label={isSearching ? "Searching" : "Search Guest"} onPress={() => void runLookup()} />
+                {lookupMessage ? (
+                  <Text selectable style={{ color: colors.muted, fontSize: 14, lineHeight: 20 }}>
+                    {lookupMessage}
+                  </Text>
+                ) : null}
+                <View style={{ gap: 10 }}>
+                  {lookupResults.map((guest) => (
+                    <LookupRow disabled={isCheckingIn} guest={guest} key={guest.ticketId} onCheckIn={(code) => void submitTicket(code)} />
+                  ))}
+                </View>
+              </View>
+            </Panel>
+          </View>
+
+          <Panel title="Walk-up Guest" icon={UserPlus} style={fullPanelStyle}>
           <TwoColumn width={width}>
             <Field label="First name">
               <WalkUpInput value={walkUp.firstName} onChangeText={(value) => setWalkUp((current) => ({ ...current, firstName: value }))} />
@@ -792,22 +913,163 @@ export function CheckInScreen() {
             label={isAddingWalkUp ? "Adding" : "Add and Check In"}
             onPress={() => void addWalkUp()}
           />
-        </Panel>
-      </View>
-    </ScreenShell>
+          </Panel>
+        </View>
+      </ScreenShell>
+      <Modal
+        animationType="slide"
+        navigationBarTranslucent
+        onRequestClose={closeCamera}
+        presentationStyle="fullScreen"
+        statusBarTranslucent
+        visible={cameraActive && Boolean(permission?.granted)}
+      >
+        <View style={{ backgroundColor: "#000", flex: 1 }}>
+          <CameraView
+            active={cameraActive && Boolean(permission?.granted)}
+            barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
+            facing="back"
+            onBarcodeScanned={
+              scanLocked
+                ? undefined
+                : ({ data }) => {
+                    setScanLocked(true);
+                    setCameraActive(false);
+                    setCameraReady(false);
+                    void submitTicket(data).finally(() => {
+                      setTimeout(() => setScanLocked(false), 900);
+                    });
+                  }
+            }
+            onCameraReady={() => setCameraReady(true)}
+            style={{ flex: 1 }}
+          />
+          <View
+            style={{
+              left: 14,
+              position: "absolute",
+              right: 14,
+              top: insets.top + 12,
+            }}
+          >
+            <View style={{ alignItems: "center", flexDirection: "row", gap: 10, justifyContent: "space-between" }}>
+              <View
+                style={{
+                  backgroundColor: "rgba(0, 0, 0, 0.72)",
+                  borderColor: "rgba(255, 255, 255, 0.18)",
+                  borderRadius: 8,
+                  borderWidth: 1,
+                  flex: 1,
+                  paddingHorizontal: 12,
+                  paddingVertical: 10,
+                }}
+              >
+                <Text style={{ color: colors.muted, fontSize: 11, fontWeight: "900", textTransform: "uppercase" }}>
+                  {selectedSession ? "Seminar scan" : "Event gate scan"}
+                </Text>
+                <Text numberOfLines={1} style={{ color: colors.text, fontSize: 16, fontWeight: "900", marginTop: 2 }}>
+                  {selectedScopeLabel}
+                </Text>
+                <Text numberOfLines={1} style={{ color: colors.soft, fontSize: 13, fontWeight: "700", marginTop: 2 }}>
+                  {selectedEvent?.title ?? "Check-in"} - {selectedDayLabel}
+                </Text>
+              </View>
+              <Pressable
+                accessibilityLabel="Close scanner"
+                accessibilityRole="button"
+                onPress={closeCamera}
+                style={({ pressed }) => ({
+                  alignItems: "center",
+                  backgroundColor: pressed ? "rgba(229, 9, 19, 0.92)" : "rgba(0, 0, 0, 0.72)",
+                  borderColor: "rgba(255, 255, 255, 0.18)",
+                  borderRadius: 8,
+                  borderWidth: 1,
+                  height: 54,
+                  justifyContent: "center",
+                  width: 54,
+                })}
+              >
+                <XCircle color={colors.text} size={26} />
+              </Pressable>
+            </View>
+          </View>
+          <View
+            pointerEvents="none"
+            style={{
+              alignItems: "center",
+              bottom: insets.bottom + 28,
+              left: 20,
+              position: "absolute",
+              right: 20,
+            }}
+          >
+            <View
+              style={{
+                backgroundColor: "rgba(0, 0, 0, 0.72)",
+                borderColor: colors.red,
+                borderRadius: 8,
+                borderWidth: 1,
+                paddingHorizontal: 18,
+                paddingVertical: 12,
+              }}
+            >
+              <Text style={{ color: colors.text, fontSize: 15, fontWeight: "900", textAlign: "center" }}>
+                Hold ticket QR in frame
+              </Text>
+            </View>
+          </View>
+          {!cameraReady ? (
+            <View
+              pointerEvents="none"
+              style={{
+                alignItems: "center",
+                backgroundColor: "rgba(0, 0, 0, 0.72)",
+                bottom: 0,
+                justifyContent: "center",
+                left: 0,
+                position: "absolute",
+                right: 0,
+                top: 0,
+              }}
+            >
+              <ActivityIndicator color={colors.red} />
+              <Text style={{ color: colors.soft, fontSize: 14, fontWeight: "700", marginTop: 10 }}>
+                Opening camera
+              </Text>
+            </View>
+          ) : null}
+        </View>
+      </Modal>
+    </>
   );
 }
 
-function ScreenShell({ children }: { children: React.ReactNode }) {
+function ScreenShell({ children, maxWidth = 1180 }: { children: React.ReactNode; maxWidth?: number }) {
+  const { width } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const isWide = width >= 760;
+  const horizontalPadding = isWide ? 24 : 16;
+  const topPadding = isWide ? 24 : 16;
+  const bottomPadding = isWide ? 44 : 36;
+
   return (
-    <KeyboardAvoidingView behavior={process.env.EXPO_OS === "ios" ? "padding" : undefined} style={{ backgroundColor: colors.background, flex: 1 }}>
+    <KeyboardAvoidingView
+      behavior={process.env.EXPO_OS === "ios" ? "padding" : undefined}
+      style={{ backgroundColor: colors.background, flex: 1, paddingBottom: insets.bottom, paddingTop: insets.top }}
+    >
       <ScrollView
-        contentContainerStyle={{ gap: 16, padding: 16, paddingBottom: 36 }}
+        contentContainerStyle={{
+          alignItems: "center",
+          gap: 16,
+          paddingBottom: bottomPadding,
+          paddingHorizontal: horizontalPadding,
+          paddingTop: topPadding,
+        }}
         contentInsetAdjustmentBehavior="automatic"
         keyboardShouldPersistTaps="handled"
         style={{ backgroundColor: colors.background, flex: 1 }}
       >
-        {children}
+        <View style={{ gap: 16, maxWidth, width: "100%" }}>{children}</View>
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -818,11 +1080,11 @@ function CenteredPanel({ children }: { children: React.ReactNode }) {
     <View
       style={{
         alignItems: "center",
-        backgroundColor: colors.panel,
+        backgroundColor: colors.panelElevated,
         borderColor: colors.border,
-        borderRadius: 8,
+        borderRadius: 28,
         borderWidth: 1,
-        boxShadow: "0 12px 30px rgba(0, 0, 0, 0.24)",
+        boxShadow: "0 18px 42px rgba(0, 0, 0, 0.3)",
         justifyContent: "center",
         minHeight: 320,
         padding: 22,
@@ -834,30 +1096,35 @@ function CenteredPanel({ children }: { children: React.ReactNode }) {
 }
 
 function SignInHeader() {
+  const { width } = useWindowDimensions();
+  const isWide = width >= 760;
+  const tileSize = isWide ? 140 : 118;
+  const markSize = isWide ? 110 : 92;
+
   return (
     <View style={{ alignItems: "center", gap: 12 }}>
       <View
         style={{
           alignItems: "center",
-          backgroundColor: "#050606",
-          borderColor: "#1f242a",
-          borderRadius: 8,
+          backgroundColor: colors.backgroundAlt,
+          borderColor: `${colors.accent}66`,
+          borderRadius: 30,
           borderWidth: 1,
-          boxShadow: "0 16px 32px rgba(0, 0, 0, 0.3)",
-          height: 118,
+          boxShadow: "0 18px 38px rgba(45, 212, 191, 0.12)",
+          height: tileSize,
           justifyContent: "center",
-          width: 118,
+          width: tileSize,
         }}
       >
         <Image
           accessibilityIgnoresInvertColors
           resizeMode="contain"
           source={require("../../assets/icon.png")}
-          style={{ height: 92, width: 92 }}
+          style={{ height: markSize, width: markSize }}
         />
       </View>
       <View style={{ alignItems: "center", gap: 5 }}>
-        <Text selectable style={{ color: colors.text, fontSize: 30, fontWeight: "900", textAlign: "center" }}>
+        <Text selectable style={{ color: colors.text, fontSize: isWide ? 36 : 30, fontWeight: "900", textAlign: "center" }}>
           FCF Check-in
         </Text>
         <Text selectable style={{ color: colors.muted, fontSize: 14, fontWeight: "700", textAlign: "center" }}>
@@ -868,22 +1135,48 @@ function SignInHeader() {
   );
 }
 
-function Panel({ children, icon: Icon, title }: { children: React.ReactNode; icon: LucideIcon; title: string }) {
+function Panel({
+  children,
+  icon: Icon,
+  style,
+  title,
+}: {
+  children: React.ReactNode;
+  icon: LucideIcon;
+  style?: StyleProp<ViewStyle>;
+  title: string;
+}) {
   return (
     <View
-      style={{
-        backgroundColor: colors.panel,
-        borderColor: colors.border,
-        borderRadius: 8,
-        borderWidth: 1,
-        boxShadow: "0 10px 24px rgba(0, 0, 0, 0.2)",
-        gap: 14,
-        padding: 14,
-      }}
+      style={[
+        {
+          backgroundColor: colors.panelElevated,
+          borderColor: colors.border,
+          borderRadius: 24,
+          borderWidth: 1,
+          boxShadow: "0 16px 36px rgba(0, 0, 0, 0.24)",
+          gap: 16,
+          padding: 18,
+        },
+        style,
+      ]}
     >
-      <View style={{ alignItems: "center", flexDirection: "row", gap: 8 }}>
-        <Icon color={colors.red} size={20} />
-        <Text selectable style={{ color: colors.text, fontSize: 18, fontWeight: "800" }}>
+      <View style={{ alignItems: "center", flexDirection: "row", gap: 10 }}>
+        <View
+          style={{
+            alignItems: "center",
+            backgroundColor: `${colors.accent}18`,
+            borderColor: `${colors.accent}44`,
+            borderRadius: 14,
+            borderWidth: 1,
+            height: 34,
+            justifyContent: "center",
+            width: 34,
+          }}
+        >
+          <Icon color={colors.accent} size={19} />
+        </View>
+        <Text selectable style={{ color: colors.text, fontSize: 18, fontWeight: "900" }}>
           {title}
         </Text>
       </View>
@@ -895,7 +1188,7 @@ function Panel({ children, icon: Icon, title }: { children: React.ReactNode; ico
 function Field({ children, label }: { children: React.ReactNode; label: string }) {
   return (
     <View style={{ gap: 7 }}>
-      <Text selectable style={{ color: colors.muted, fontSize: 13, fontWeight: "700" }}>
+      <Text selectable style={{ color: colors.muted, fontSize: 12, fontWeight: "900", textTransform: "uppercase" }}>
         {label}
       </Text>
       {children}
@@ -923,16 +1216,16 @@ function ActionButton({
       onPress={onPress}
       style={({ pressed }) => ({
         alignItems: "center",
-        backgroundColor: disabled ? "#36393e" : isSecondary ? colors.panelAlt : pressed ? colors.redDark : colors.red,
-        borderColor: disabled ? "#44484e" : isSecondary ? colors.border : colors.red,
-        borderRadius: 8,
+        backgroundColor: disabled ? "#343a46" : isSecondary ? (pressed ? colors.panelElevated : colors.panelAlt) : pressed ? colors.accentDark : colors.accent,
+        borderColor: disabled ? "#475063" : isSecondary ? colors.border : colors.accent,
+        borderRadius: 18,
         borderWidth: 1,
         flexDirection: "row",
         gap: 8,
         justifyContent: "center",
-        minHeight: 48,
+        minHeight: 56,
         opacity: disabled ? 0.58 : 1,
-        paddingHorizontal: 14,
+        paddingHorizontal: 16,
       })}
     >
       <Icon color={colors.text} size={18} />
@@ -950,14 +1243,14 @@ function IconButton({ disabled, icon: Icon, onPress }: { disabled?: boolean; ico
       onPress={onPress}
       style={({ pressed }) => ({
         alignItems: "center",
-        backgroundColor: pressed ? "#24282d" : colors.panel,
+        backgroundColor: pressed ? colors.panelElevated : colors.panelAlt,
         borderColor: colors.border,
-        borderRadius: 8,
+        borderRadius: 18,
         borderWidth: 1,
-        height: 46,
+        height: 56,
         justifyContent: "center",
         opacity: disabled ? 0.5 : 1,
-        width: 46,
+        width: 56,
       })}
     >
       <Icon color={colors.soft} size={20} />
@@ -965,43 +1258,468 @@ function IconButton({ disabled, icon: Icon, onPress }: { disabled?: boolean; ico
   );
 }
 
+function PasswordToggleButton({ onPress, visible }: { onPress: () => void; visible: boolean }) {
+  const Icon = visible ? EyeOff : Eye;
+
+  return (
+    <Pressable
+      accessibilityLabel={visible ? "Hide password" : "Show password"}
+      accessibilityRole="button"
+      accessibilityState={{ selected: visible }}
+      onPress={onPress}
+      style={({ pressed }) => ({
+        alignItems: "center",
+        backgroundColor: pressed ? colors.panelElevated : "transparent",
+        borderRadius: 14,
+        height: 48,
+        justifyContent: "center",
+        position: "absolute",
+        right: 4,
+        top: 4,
+        width: 48,
+      })}
+    >
+      <Icon color={colors.soft} size={20} />
+    </Pressable>
+  );
+}
+
+function RememberMeToggle({ active, onPress }: { active: boolean; onPress: () => void }) {
+  return (
+    <Pressable
+      accessibilityLabel="Remember me on this device"
+      accessibilityRole="checkbox"
+      accessibilityState={{ checked: active }}
+      onPress={onPress}
+      style={({ pressed }) => ({
+        alignItems: "center",
+        backgroundColor: pressed ? colors.panelElevated : colors.panelAlt,
+        borderColor: active ? colors.accent : colors.border,
+        borderRadius: 18,
+        borderWidth: 1,
+        flexDirection: "row",
+        gap: 10,
+        minHeight: 56,
+        paddingHorizontal: 14,
+      })}
+    >
+      <View
+        style={{
+          alignItems: "center",
+          backgroundColor: active ? colors.accent : "transparent",
+          borderColor: active ? colors.accent : colors.muted,
+          borderRadius: 6,
+          borderWidth: 1,
+          height: 24,
+          justifyContent: "center",
+          width: 24,
+        }}
+      >
+        {active ? <CheckCircle2 color={colors.text} size={16} /> : null}
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={{ color: colors.text, fontSize: 15, fontWeight: "800" }}>
+          Remember me
+        </Text>
+        <Text style={{ color: colors.muted, fontSize: 12, lineHeight: 16, marginTop: 2 }}>
+          Keep this scanner account signed in on this device.
+        </Text>
+      </View>
+    </Pressable>
+  );
+}
+
+function StaffTopBar({
+  checkedInCount,
+  isLoading,
+  modeLabel,
+  onRefresh,
+  onSignOut,
+  selectedEventTitle,
+  selectedScopeLabel,
+  totalCount,
+}: {
+  checkedInCount: number;
+  isLoading: boolean;
+  modeLabel: string;
+  onRefresh: () => void;
+  onSignOut: () => void;
+  selectedEventTitle: string;
+  selectedScopeLabel: string;
+  totalCount: number;
+}) {
+  const { width } = useWindowDimensions();
+  const isWide = width >= 760;
+
+  return (
+    <View
+      style={{
+        alignItems: isWide ? "center" : "stretch",
+        backgroundColor: colors.panel,
+        borderColor: colors.border,
+        borderRadius: 26,
+        borderWidth: 1,
+        boxShadow: "0 18px 42px rgba(0, 0, 0, 0.28)",
+        flexDirection: isWide ? "row" : "column",
+        gap: 14,
+        justifyContent: "space-between",
+        padding: isWide ? 18 : 16,
+      }}
+    >
+      <View style={{ alignItems: "center", flex: 1, flexDirection: "row", gap: 14, minWidth: 0 }}>
+        <View
+          style={{
+            alignItems: "center",
+            backgroundColor: colors.backgroundAlt,
+            borderColor: `${colors.accent}66`,
+            borderRadius: 20,
+            borderWidth: 1,
+            height: 58,
+            justifyContent: "center",
+            width: 58,
+          }}
+        >
+          <Image
+            accessibilityIgnoresInvertColors
+            resizeMode="contain"
+            source={require("../../assets/icon.png")}
+            style={{ height: 40, width: 40 }}
+          />
+        </View>
+        <View style={{ flex: 1, gap: 5, minWidth: 0 }}>
+          <View style={{ alignItems: "center", flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+            <StatusPill label={modeLabel} />
+            <Text style={{ color: colors.muted, fontSize: 12, fontWeight: "800" }}>
+              {checkedInCount}/{totalCount} checked in
+            </Text>
+          </View>
+          <Text numberOfLines={2} selectable style={{ color: colors.text, fontSize: isWide ? 27 : 22, fontWeight: "900", lineHeight: isWide ? 32 : 27 }}>
+            {selectedEventTitle}
+          </Text>
+          <Text numberOfLines={1} selectable style={{ color: colors.soft, fontSize: 14, fontWeight: "700" }}>
+            {selectedScopeLabel}
+          </Text>
+        </View>
+      </View>
+      <View style={{ flexDirection: "row", gap: 10, justifyContent: isWide ? "flex-end" : "space-between" }}>
+        <IconButton disabled={isLoading} icon={RefreshCw} onPress={onRefresh} />
+        <IconButton disabled={isLoading} icon={LogOut} onPress={onSignOut} />
+      </View>
+    </View>
+  );
+}
+
+function ScannerLaunchCard({
+  cameraHeight,
+  cameraMessage,
+  canCheckIn,
+  isCheckingIn,
+  onManualTicket,
+  onOpenScanner,
+  permissionGranted,
+  selectedDayLabel,
+  selectedEventTitle,
+  selectedSession,
+  selectedScopeLabel,
+}: {
+  cameraHeight: number;
+  cameraMessage: string | null;
+  canCheckIn: boolean;
+  isCheckingIn: boolean;
+  onManualTicket: () => void;
+  onOpenScanner: () => void;
+  permissionGranted?: boolean;
+  selectedDayLabel: string;
+  selectedEventTitle: string;
+  selectedSession: SessionSummary | null;
+  selectedScopeLabel: string;
+}) {
+  return (
+    <View
+      style={{
+        backgroundColor: "#02040a",
+        borderColor: canCheckIn ? `${colors.accent}66` : `${colors.amber}55`,
+        borderRadius: 28,
+        borderWidth: 1,
+        minHeight: cameraHeight,
+        overflow: "hidden",
+        padding: 18,
+      }}
+    >
+      <View
+        style={{
+          alignItems: "center",
+          borderColor: `${colors.soft}22`,
+          borderRadius: 24,
+          borderWidth: 1,
+          flex: 1,
+          gap: 16,
+          justifyContent: "center",
+          minHeight: cameraHeight - 36,
+          padding: 20,
+        }}
+      >
+        <View
+          style={{
+            alignItems: "center",
+            backgroundColor: `${colors.accent}16`,
+            borderColor: `${colors.accent}55`,
+            borderRadius: 34,
+            borderWidth: 1,
+            height: 68,
+            justifyContent: "center",
+            width: 68,
+          }}
+        >
+          <Camera color={colors.accent} size={36} />
+        </View>
+        <View style={{ alignItems: "center", gap: 6 }}>
+          <Text selectable style={{ color: colors.text, fontSize: 21, fontWeight: "900", textAlign: "center" }}>
+            {canCheckIn ? selectedScopeLabel : "Choose an event and day"}
+          </Text>
+          <Text selectable style={{ color: colors.muted, fontSize: 14, fontWeight: "700", lineHeight: 20, textAlign: "center" }}>
+            {selectedEventTitle} - {selectedDayLabel}
+            {selectedSession?.room ? ` - ${selectedSession.room}` : ""}
+          </Text>
+        </View>
+        <StatusPill label={selectedSession ? "Seminar check-in" : "Event gate check-in"} />
+        {cameraMessage ? (
+          <Text selectable style={{ color: colors.amber, fontSize: 13, fontWeight: "700", lineHeight: 18, textAlign: "center" }}>
+            {cameraMessage}
+          </Text>
+        ) : null}
+        <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 10, justifyContent: "center", width: "100%" }}>
+          <View style={{ flexGrow: 1, minWidth: 210 }}>
+            <ActionButton
+              disabled={isCheckingIn}
+              icon={Camera}
+              label={permissionGranted ? "Start Full-Screen Scanner" : "Allow Camera"}
+              onPress={onOpenScanner}
+            />
+          </View>
+          <View style={{ flexGrow: 1, minWidth: 160 }}>
+            <ActionButton icon={Keyboard} label="Manual Ticket" onPress={onManualTicket} variant="secondary" />
+          </View>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function QuickActionDock({ onNote, onUndo, onVip }: { onNote: () => void; onUndo: () => void; onVip: () => void }) {
+  return (
+    <View style={{ flexDirection: "row", gap: 10 }}>
+      <QuickDockButton icon={Crown} label="VIP" onPress={onVip} />
+      <QuickDockButton icon={NotebookPen} label="Note" onPress={onNote} />
+      <QuickDockButton icon={Undo2} label="Undo" onPress={onUndo} />
+    </View>
+  );
+}
+
+function QuickDockButton({ icon: Icon, label, onPress }: { icon: LucideIcon; label: string; onPress: () => void }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => ({
+        alignItems: "center",
+        backgroundColor: pressed ? colors.panelElevated : colors.panelAlt,
+        borderColor: colors.border,
+        borderRadius: 18,
+        borderWidth: 1,
+        flex: 1,
+        gap: 6,
+        minHeight: 70,
+        justifyContent: "center",
+      })}
+    >
+      <Icon color={colors.accent} size={21} />
+      <Text style={{ color: colors.soft, fontSize: 12, fontWeight: "900" }}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function PremiumResultCard({
+  result,
+  statusMessage,
+}: {
+  result: CheckInResult | WalkUpCheckInResult | null;
+  statusMessage: string | null;
+}) {
+  if (!result) {
+    return (
+      <View style={{ alignItems: "center", backgroundColor: colors.backgroundAlt, borderColor: colors.border, borderRadius: 24, borderWidth: 1, gap: 14, minHeight: 260, justifyContent: "center", padding: 20 }}>
+        <Sparkles color={colors.accent} size={42} />
+        <View style={{ alignItems: "center", gap: 6 }}>
+          <Text selectable style={{ color: colors.text, fontSize: 22, fontWeight: "900", textAlign: "center" }}>
+            Ready for next scan
+          </Text>
+          <Text selectable style={{ color: colors.muted, fontSize: 14, lineHeight: 20, textAlign: "center" }}>
+            Scan a QR ticket or enter a code manually.
+          </Text>
+        </View>
+      </View>
+    );
+  }
+
+  const Icon = resultIcon(result);
+  const tone = resultTone(result.result);
+  const toneColor = tone === "success" ? colors.green : tone === "warning" ? colors.amber : colors.danger;
+  const ticketCode = "ticketCode" in result ? result.ticketCode : null;
+  const name = result.attendeeName ?? "Guest";
+
+  return (
+    <View
+      style={{
+        backgroundColor: `${toneColor}12`,
+        borderColor: `${toneColor}66`,
+        borderRadius: 24,
+        borderWidth: 1,
+        gap: 14,
+        minHeight: 260,
+        padding: 18,
+      }}
+    >
+      <View style={{ alignItems: "center", gap: 12 }}>
+        <View
+          style={{
+            alignItems: "center",
+            backgroundColor: `${toneColor}22`,
+            borderColor: `${toneColor}66`,
+            borderRadius: 36,
+            borderWidth: 1,
+            height: 72,
+            justifyContent: "center",
+            width: 72,
+          }}
+        >
+          <Icon color={toneColor} size={42} />
+        </View>
+        <StatusBanner tone={tone} text={result.result.replaceAll("_", " ")} />
+      </View>
+      <View
+        style={{
+          alignItems: "center",
+          backgroundColor: colors.panel,
+          borderColor: colors.border,
+          borderRadius: 20,
+          borderWidth: 1,
+          flexDirection: "row",
+          gap: 12,
+          padding: 14,
+        }}
+      >
+        <View
+          style={{
+            alignItems: "center",
+            backgroundColor: `${colors.indigo}30`,
+            borderColor: `${colors.indigo}66`,
+            borderRadius: 22,
+            borderWidth: 1,
+            height: 48,
+            justifyContent: "center",
+            width: 48,
+          }}
+        >
+          <Text style={{ color: colors.text, fontSize: 15, fontWeight: "900" }}>{getInitials(name)}</Text>
+        </View>
+        <View style={{ flex: 1, gap: 4, minWidth: 0 }}>
+          <Text numberOfLines={2} selectable style={{ color: colors.text, fontSize: 19, fontWeight: "900", lineHeight: 23 }}>
+            {name}
+          </Text>
+          <Text numberOfLines={1} selectable style={{ color: colors.muted, fontSize: 13, fontWeight: "700" }}>
+            {result.ticketTypeName ?? "Ticket"}
+          </Text>
+        </View>
+      </View>
+      {statusMessage ? (
+        <Text selectable style={{ color: colors.soft, fontSize: 14, fontWeight: "700", lineHeight: 20 }}>
+          {statusMessage}
+        </Text>
+      ) : null}
+      {ticketCode ? <InfoLine label="Ticket code" value={ticketCode} /> : null}
+      {result.checkedInAt ? <InfoLine label="Checked in" value={formatDate(result.checkedInAt)} /> : null}
+      {result.priorCheckedInAt ? <InfoLine label="Prior check-in" value={formatDate(result.priorCheckedInAt)} /> : null}
+    </View>
+  );
+}
+
+function AttendeeStatsStrip({
+  checkedInCount,
+  checkInRate,
+  notCheckedInCount,
+}: {
+  checkedInCount: number;
+  checkInRate: number;
+  notCheckedInCount: number;
+}) {
+  return (
+    <View style={{ gap: 10 }}>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+        <CounterPill label="Checked in" value={checkedInCount} tone="success" />
+        <CounterPill label="Waiting" value={notCheckedInCount} tone="muted" />
+        <View
+          style={{
+            alignItems: "center",
+            backgroundColor: `${colors.indigo}20`,
+            borderColor: `${colors.indigo}66`,
+            borderRadius: 999,
+            borderWidth: 1,
+            flexDirection: "row",
+            gap: 8,
+            minHeight: 42,
+            paddingHorizontal: 14,
+          }}
+        >
+          <Star color={colors.indigo} size={16} />
+          <Text style={{ color: colors.text, fontSize: 13, fontVariant: ["tabular-nums"], fontWeight: "900" }}>{checkInRate}% flow</Text>
+        </View>
+      </View>
+      <View style={{ backgroundColor: colors.panelAlt, borderRadius: 999, height: 8, overflow: "hidden" }}>
+        <View style={{ backgroundColor: colors.accent, borderRadius: 999, height: 8, width: `${Math.min(checkInRate, 100)}%` }} />
+      </View>
+    </View>
+  );
+}
+
 function OptionRail({
+  emptyText = "No options available.",
   items,
   onChange,
   value,
 }: {
+  emptyText?: string;
   items: { label: string; detail?: string; value: string }[];
   onChange: (value: string) => void;
   value: string;
 }) {
-  if (!items.length) return <EmptyText text="No options available." />;
+  if (!items.length) return <EmptyText text={emptyText} />;
 
   return (
     <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-      <View style={{ flexDirection: "row", gap: 8, paddingRight: 4 }}>
+      <View style={{ flexDirection: "row", gap: 10, paddingRight: 4 }}>
         {items.map((item) => {
           const active = item.value === value;
           return (
             <Pressable
               key={`${item.value}-${item.label}`}
               onPress={() => onChange(item.value)}
-              style={{
-                backgroundColor: active ? colors.red : colors.panelAlt,
-                borderColor: active ? colors.red : colors.border,
-                borderRadius: 8,
+              style={({ pressed }) => ({
+                backgroundColor: active ? colors.accentDark : pressed ? colors.panelElevated : colors.panelAlt,
+                borderColor: active ? colors.accent : colors.border,
+                borderRadius: 18,
                 borderWidth: 1,
-                maxWidth: 240,
-                minHeight: 56,
-                minWidth: 132,
-                paddingHorizontal: 12,
-                paddingVertical: 10,
-              }}
+                maxWidth: 280,
+                minHeight: 68,
+                minWidth: 150,
+                paddingHorizontal: 14,
+                paddingVertical: 12,
+              })}
             >
-              <Text numberOfLines={1} style={{ color: colors.text, fontSize: 14, fontWeight: "800" }}>
+              <Text numberOfLines={1} style={{ color: colors.text, fontSize: 14, fontWeight: "900" }}>
                 {item.label}
               </Text>
               {item.detail ? (
-                <Text numberOfLines={1} style={{ color: active ? "#ffe3e5" : colors.muted, fontSize: 12, marginTop: 3 }}>
+                <Text numberOfLines={1} style={{ color: active ? "#ccfbf1" : colors.muted, fontSize: 12, fontWeight: "700", marginTop: 5 }}>
                   {item.detail}
                 </Text>
               ) : null}
@@ -1013,17 +1731,59 @@ function OptionRail({
   );
 }
 
+function SummaryPill({ emphasis, label, value }: { emphasis?: boolean; label: string; value: string }) {
+  return (
+    <View
+      style={{
+        backgroundColor: emphasis ? `${colors.accent}18` : colors.panelAlt,
+        borderColor: emphasis ? colors.accent : colors.border,
+        borderRadius: 18,
+        borderWidth: 1,
+        flexGrow: 1,
+        minHeight: 66,
+        minWidth: 150,
+        paddingHorizontal: 14,
+        paddingVertical: 11,
+      }}
+    >
+      <Text style={{ color: colors.muted, fontSize: 11, fontWeight: "800", textTransform: "uppercase" }}>
+        {label}
+      </Text>
+      <Text numberOfLines={2} style={{ color: colors.text, fontSize: 15, fontWeight: "900", lineHeight: 19, marginTop: 4 }}>
+        {value}
+      </Text>
+    </View>
+  );
+}
+
+function StatusPill({ label }: { label: string }) {
+  return (
+    <View
+      style={{
+        backgroundColor: `${colors.accent}18`,
+        borderColor: `${colors.accent}66`,
+        borderRadius: 999,
+        borderWidth: 1,
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+      }}
+    >
+      <Text style={{ color: colors.text, fontSize: 12, fontWeight: "900" }}>{label}</Text>
+    </View>
+  );
+}
+
 function StatusBanner({ text, tone }: { text: string; tone: "success" | "warning" | "danger" | "muted" }) {
-  const toneColor = tone === "success" ? colors.green : tone === "warning" ? colors.amber : tone === "danger" ? colors.red : colors.blue;
+  const toneColor = tone === "success" ? colors.green : tone === "warning" ? colors.amber : tone === "danger" ? colors.danger : colors.blue;
   return (
     <View
       style={{
         backgroundColor: `${toneColor}22`,
         borderColor: `${toneColor}66`,
-        borderRadius: 8,
+        borderRadius: 18,
         borderWidth: 1,
-        paddingHorizontal: 12,
-        paddingVertical: 10,
+        paddingHorizontal: 14,
+        paddingVertical: 11,
       }}
     >
       <Text selectable style={{ color: colors.text, fontSize: 15, fontWeight: "800", textTransform: "capitalize" }}>
@@ -1041,12 +1801,12 @@ function CounterPill({ label, tone, value }: { label: string; tone: "success" | 
         alignItems: "center",
         backgroundColor: `${color}18`,
         borderColor: `${color}55`,
-        borderRadius: 8,
+        borderRadius: 999,
         borderWidth: 1,
         flexDirection: "row",
         gap: 7,
-        minHeight: 40,
-        paddingHorizontal: 12,
+        minHeight: 42,
+        paddingHorizontal: 14,
       }}
     >
       <Text style={{ color, fontSize: 13, fontWeight: "800" }}>{label}</Text>
@@ -1059,17 +1819,17 @@ function FilterButton({ active, label, onPress }: { active: boolean; label: stri
   return (
     <Pressable
       onPress={onPress}
-      style={{
+      style={({ pressed }) => ({
         alignItems: "center",
-        backgroundColor: active ? colors.red : colors.panelAlt,
-        borderColor: active ? colors.red : colors.border,
-        borderRadius: 8,
+        backgroundColor: active ? colors.indigo : pressed ? colors.panelElevated : colors.panelAlt,
+        borderColor: active ? colors.indigo : colors.border,
+        borderRadius: 16,
         borderWidth: 1,
         flex: 1,
-        minHeight: 42,
+        minHeight: 48,
         justifyContent: "center",
         paddingHorizontal: 10,
-      }}
+      })}
     >
       <Text style={{ color: colors.text, fontSize: 13, fontWeight: "800" }}>{label}</Text>
     </Pressable>
@@ -1090,10 +1850,10 @@ function AttendeeRow({
       style={{
         backgroundColor: colors.panelAlt,
         borderColor: colors.border,
-        borderRadius: 8,
+        borderRadius: 20,
         borderWidth: 1,
-        gap: 10,
-        padding: 12,
+        gap: 12,
+        padding: 14,
       }}
     >
       <View style={{ flexDirection: "row", gap: 10, justifyContent: "space-between" }}>
@@ -1136,10 +1896,10 @@ function LookupRow({
       style={{
         backgroundColor: colors.panelAlt,
         borderColor: colors.border,
-        borderRadius: 8,
+        borderRadius: 20,
         borderWidth: 1,
-        gap: 10,
-        padding: 12,
+        gap: 12,
+        padding: 14,
       }}
     >
       <View style={{ gap: 4 }}>
@@ -1182,9 +1942,9 @@ function EmptyText({ text }: { text: string }) {
       style={{
         backgroundColor: colors.panelAlt,
         borderColor: colors.border,
-        borderRadius: 8,
+        borderRadius: 18,
         borderWidth: 1,
-        padding: 14,
+        padding: 16,
       }}
     >
       <Text selectable style={{ color: colors.muted, fontSize: 14, lineHeight: 20 }}>
@@ -1216,12 +1976,12 @@ function TwoColumn({ children, width }: { children: React.ReactNode; width: numb
 const inputStyle = {
   backgroundColor: colors.panelAlt,
   borderColor: colors.border,
-  borderRadius: 8,
+  borderRadius: 18,
   borderWidth: 1,
   color: colors.text,
   fontSize: 16,
-  minHeight: 48,
-  paddingHorizontal: 12,
+  minHeight: 56,
+  paddingHorizontal: 14,
 } as const;
 
 function extractTicketCode(rawValue: string) {
@@ -1255,6 +2015,19 @@ function resultTone(result: CheckInResult["result"]): "success" | "warning" | "d
   if (result === "success") return "success";
   if (result === "duplicate") return "warning";
   return "danger";
+}
+
+function getInitials(value: string) {
+  const parts = value
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (!parts.length) return "FC";
+  return parts
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("");
 }
 
 function formatDate(value: string) {

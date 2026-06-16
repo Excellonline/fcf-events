@@ -19,15 +19,14 @@
       "permissions": [
         "CAMERA"
       ],
-      "usesCleartextTraffic": true,
+      "usesCleartextTraffic": false,
       "predictiveBackGestureEnabled": false
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-secure-store",
-      "./plugins/with-cleartext-traffic"
+      "expo-secure-store"
     ]
   }
 }

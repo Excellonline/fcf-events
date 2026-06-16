@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   ClipboardList,
   ContactRound,
+  Download,
   LayoutDashboard,
   LogOut,
   Mail,
@@ -34,6 +35,7 @@ const nav: Array<{ href: string; label: string; icon: React.ElementType; roles?:
   { href: "/dashboard/users", label: "Users", icon: UserCog, roles: ["owner", "admin"] },
   { href: "/dashboard/settings", label: "Settings", icon: Settings, roles: ["owner", "admin"] },
   { href: "/dashboard/check-in", label: "Check-in", icon: CheckCircle2, roles: ["owner", "admin", "manager", "check_in_staff"] },
+  { href: "/dashboard/app-download", label: "App Download", icon: Download, roles: ["owner", "admin"] },
   { href: "/dashboard/airtable-sync", label: "Airtable Sync", icon: AirVent, roles: ["owner", "admin"] },
   { href: "/dashboard/audit-logs", label: "Audit Logs", icon: ShieldCheck, roles: ["owner", "admin", "manager", "viewer"] },
 ];
@@ -48,6 +50,7 @@ const footerLinks = [
 
 function visibleNavItems(role: Role | null) {
   if (!role) return nav;
+  if (role === "check_in_staff") return nav.filter((item) => item.href === "/dashboard/check-in");
   return nav.filter((item) => !item.roles || item.roles.includes(role));
 }
 
@@ -61,11 +64,13 @@ export function AppShell({
   currentRole?: Role | null;
 }) {
   const items = visibleNavItems(currentRole ?? null);
+  const homeHref = currentRole === "check_in_staff" ? "/dashboard/check-in" : "/dashboard";
+  const canEditAccount = currentRole !== "check_in_staff";
 
   return (
     <div className="min-h-screen bg-[#0b0b0b] text-white">
       <aside className="fixed inset-y-0 left-0 z-20 hidden w-72 border-r border-white/10 bg-[#0f0f0f] p-4 lg:block">
-        <Link href="/dashboard" className="mb-8 flex items-center gap-3">
+        <Link href={homeHref} className="mb-8 flex items-center gap-3">
           <Image
             src="/brand/fcf-wordmark-white.png"
             alt="The Federation of Cannabis Farmers"
@@ -89,12 +94,14 @@ export function AppShell({
           ))}
         </nav>
         <div className="group/account absolute bottom-4 left-4 right-4 rounded-md border border-white/10 bg-[#0b0b0b] p-3 transition hover:border-white/20 hover:bg-white/[0.03]">
-          <Link
-            href="/account/settings"
-            className="absolute inset-0 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#e50913]"
-            aria-label="Edit account settings"
-            title="Edit account settings"
-          />
+          {canEditAccount ? (
+            <Link
+              href="/account/settings"
+              className="absolute inset-0 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#e50913]"
+              aria-label="Edit account settings"
+              title="Edit account settings"
+            />
+          ) : null}
           <p className="pointer-events-none truncate text-xs text-[#999999] transition group-hover/account:text-[#cfcfcf]">
             {currentEmail ?? "Demo user"}
           </p>
@@ -115,26 +122,26 @@ export function AppShell({
           </div>
         </div>
       </aside>
-      <div className="lg:pl-72">
+      <div className="min-w-0 lg:pl-72">
         <header className="sticky top-0 z-10 border-b border-white/10 bg-[#0b0b0b]/90 px-4 py-3 backdrop-blur lg:px-8">
           <div className="flex items-center justify-between gap-4">
-            <Link href="/dashboard" className="flex items-center gap-2 lg:hidden">
+            <Link href={homeHref} className="flex min-w-0 items-center gap-2 lg:hidden">
               <Image
                 src="/brand/fcf-wordmark-white.png"
                 alt="The Federation of Cannabis Farmers"
                 width={210}
                 height={49}
-                className="h-auto w-36"
+                className="h-auto w-28 min-[380px]:w-36"
               />
             </Link>
             <div className="hidden text-sm text-[#999999] lg:block">Private event operations platform</div>
             <Link
-              href="/account/settings"
-              className="flex items-center gap-2 rounded-md px-2 py-1 text-xs text-[#999999] transition hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#e50913]"
-              title="Edit account settings"
+              href={canEditAccount ? "/account/settings" : homeHref}
+              className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1 text-xs text-[#999999] transition hover:bg-white/10 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#e50913]"
+              title={canEditAccount ? "Edit account settings" : "Check-in access"}
             >
-              <Activity className="h-4 w-4 text-emerald-300" aria-hidden />
-              {currentRole ? ROLE_LABELS[currentRole] : "Demo-safe mode"}
+              <Activity className="h-4 w-4 shrink-0 text-emerald-300" aria-hidden />
+              <span className="truncate">{currentRole ? ROLE_LABELS[currentRole] : "Demo-safe mode"}</span>
             </Link>
           </div>
           <nav className="-mx-4 mt-3 flex gap-2 overflow-x-auto border-t border-white/10 px-4 pt-3 lg:hidden">
@@ -150,7 +157,7 @@ export function AppShell({
             ))}
           </nav>
         </header>
-        <main className="px-4 py-6 lg:px-8">
+        <main className="min-w-0 px-4 py-6 lg:px-8">
           {children}
           <footer className="mt-10 flex flex-wrap gap-x-4 gap-y-2 border-t border-white/10 pt-5 text-xs text-[#999999]">
             {footerLinks.map((link) => (

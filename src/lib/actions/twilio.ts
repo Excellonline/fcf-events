@@ -1,6 +1,7 @@
 "use server";
 
 import { env, isServiceRoleConfigured } from "@/lib/env";
+import { requireDashboardAccess } from "@/lib/auth";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { decryptSecret, encryptSecret } from "@/lib/security/encryption";
 import { smsSendSchema, twilioSettingsSchema } from "@/lib/validation";
@@ -10,6 +11,7 @@ import { segmentCount } from "@/lib/utils";
 import { writeAuditLog } from "@/lib/audit";
 
 export async function saveTwilioSettings(input: FormData) {
+  const access = await requireDashboardAccess(["owner", "admin"]);
   const parsed = twilioSettingsSchema.safeParse({
     organizationId: input.get("organizationId"),
     accountSid: input.get("accountSid"),
@@ -25,6 +27,10 @@ export async function saveTwilioSettings(input: FormData) {
   });
 
   if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? "Invalid Twilio settings." };
+  if (parsed.data.organizationId !== access.organizationId) {
+    return { ok: false, message: "Twilio organization does not match your access." };
+  }
+
   if (!isServiceRoleConfigured()) return { ok: true, message: "Settings validated. Connect Supabase to persist them." };
 
   const values = parsed.data;
@@ -48,6 +54,7 @@ export async function saveTwilioSettings(input: FormData) {
 
   await writeAuditLog({
     organizationId: values.organizationId,
+    actorUserId: access.userId ?? undefined,
     action: "twilio.settings.updated",
     entityType: "twilio_config",
     metadata: { accountSid: values.accountSid, tokenUpdated: Boolean(values.authToken) },
@@ -57,8 +64,13 @@ export async function saveTwilioSettings(input: FormData) {
 }
 
 export async function sendTestSms(input: unknown) {
+  const access = await requireDashboardAccess(["owner", "admin", "manager"]);
   const parsed = smsSendSchema.safeParse(input);
   if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? "Invalid test SMS." };
+  if (parsed.data.organizationId !== access.organizationId) {
+    return { ok: false, message: "SMS organization does not match your access." };
+  }
+
   if (!isServiceRoleConfigured()) return { ok: true, message: "SMS validated. Configure Supabase and Twilio to send." };
 
   const values = parsed.data;

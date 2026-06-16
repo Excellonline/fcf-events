@@ -1,9 +1,14 @@
 import { NextResponse } from "next/server";
 import { isServiceRoleConfigured } from "@/lib/env";
+import { verifyTwilioRequest } from "@/lib/security/request";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 export async function POST(request: Request) {
   const form = await request.formData();
+  if (!(await verifyTwilioRequest(request, form))) {
+    return NextResponse.json({ ok: false, message: "Invalid Twilio signature." }, { status: 403 });
+  }
+
   const messageSid = String(form.get("MessageSid") ?? form.get("SmsSid") ?? "");
   const messageStatus = String(form.get("MessageStatus") ?? form.get("SmsStatus") ?? "");
   const errorCode = form.get("ErrorCode");
@@ -23,4 +28,3 @@ export async function POST(request: Request) {
 
   return NextResponse.json({ ok: true });
 }
-

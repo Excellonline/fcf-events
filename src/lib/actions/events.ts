@@ -52,6 +52,8 @@ export async function createEventAction(input: FormData) {
     return { ok: false, message: parsedTicketTypes.error.issues[0]?.message ?? "Invalid ticket types." };
   }
 
+  const access = await requireDashboardAccess(EVENT_MANAGEMENT_ROLES);
+
   if (!isServiceRoleConfigured()) {
     return { ok: true, message: "Event and ticket types validated. Connect Supabase to persist them.", persisted: false };
   }
@@ -124,6 +126,7 @@ export async function createEventAction(input: FormData) {
 
   await writeAuditLog({
     organizationId: demoOrganizationId,
+    actorUserId: access.userId ?? undefined,
     action: "event.created",
     entityType: "event",
     entityId: data.id,
@@ -170,6 +173,8 @@ export async function updateEventAction(input: FormData) {
   if (!parsed.success) {
     return { ok: false, message: parsed.error.issues[0]?.message ?? "Invalid event." };
   }
+
+  const access = await requireDashboardAccess(EVENT_MANAGEMENT_ROLES);
 
   if (!isServiceRoleConfigured()) {
     return { ok: true, message: "Event validated. Connect Supabase to persist it.", persisted: false };
@@ -227,6 +232,7 @@ export async function updateEventAction(input: FormData) {
 
   await writeAuditLog({
     organizationId: existingEvent.organization_id,
+    actorUserId: access.userId ?? undefined,
     action: "event.updated",
     entityType: "event",
     entityId: existingEvent.id,
@@ -261,6 +267,8 @@ export async function updateEventZeffySettingsAction(input: FormData) {
   if (!parsed.success) {
     return { ok: false, message: parsed.error.issues[0]?.message ?? "Invalid Zeffy settings." };
   }
+
+  const access = await requireDashboardAccess(EVENT_MANAGEMENT_ROLES);
 
   if (!isServiceRoleConfigured()) {
     return { ok: true, message: "Zeffy settings validated. Connect Supabase to persist them." };
@@ -298,6 +306,7 @@ export async function updateEventZeffySettingsAction(input: FormData) {
 
   await writeAuditLog({
     organizationId: event.organization_id,
+    actorUserId: access.userId ?? undefined,
     action: "event.zeffy_settings.updated",
     entityType: "event",
     entityId: event.id,

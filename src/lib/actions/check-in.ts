@@ -2,7 +2,7 @@
 
 import { headers } from "next/headers";
 import { createClient } from "@supabase/supabase-js";
-import { env, isServiceRoleConfigured, isSupabaseConfigured } from "@/lib/env";
+import { env, isDemoModeEnabled, isServiceRoleConfigured, isSupabaseConfigured } from "@/lib/env";
 import { demoAttendees, demoEventDays, demoEvents, demoSessions, demoTicketTypes } from "@/lib/demo-data";
 import { createTicketCode, hashTicketToken } from "@/lib/security/qr";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
@@ -267,6 +267,22 @@ function isRegistrationPaid(registration: { payment_status: string; amount_due: 
   return Number(registration.amount_due ?? 0) <= Number(registration.amount_paid ?? 0);
 }
 
+function isFallbackEventDay(eventId: string, eventDayId: string) {
+  return eventDayId === eventId;
+}
+
+function buildFallbackEventDays(events: EventSummary[]): EventDaySummary[] {
+  return events.map((event) => ({
+    id: event.id,
+    organization_id: event.organization_id,
+    event_id: event.id,
+    label: "Daily admission",
+    starts_at: event.starts_at,
+    ends_at: event.ends_at,
+    sort_order: 0,
+  }));
+}
+
 async function enrichCheckInTicketTypes(
   supabase: SupabaseAdminClient,
   ticketTypeRows: Record<string, unknown>[],
@@ -310,7 +326,7 @@ async function getTicketAllowedEventDayIds(
   ticketTypeId: string | null,
 ) {
   const { data: eventDays } = await supabase.from("event_days").select("id").eq("event_id", eventId).order("sort_order");
-  const allEventDayIds = (eventDays ?? []).map((day) => day.id as string);
+  const allEventDayIds = eventDays?.length ? eventDays.map((day) => day.id as string) : [eventId];
   if (!ticketTypeId) return allEventDayIds;
 
   const { data: accessRows } = await supabase
@@ -336,14 +352,15 @@ async function validateSessionAccess({
   registrationId: string;
   ticketTypeId: string | null;
 }): Promise<{ ok: true } | { ok: false; result: "not_entitled_for_session" }> {
+  const usesFallbackDay = isFallbackEventDay(eventId, eventDayId);
   const { data: session } = await supabase
     .from("sessions")
-    .select("id, event_id, event_day_id, requires_registration, allowed_ticket_type_ids")
+    .select("*")
     .eq("id", sessionId)
     .maybeSingle();
 
   if (!session || session.event_id !== eventId) return { ok: false, result: "not_entitled_for_session" };
-  if (session.event_day_id && session.event_day_id !== eventDayId) return { ok: false, result: "not_entitled_for_session" };
+  if (!usesFallbackDay && session.event_day_id && session.event_day_id !== eventDayId) return { ok: false, result: "not_entitled_for_session" };
 
   const allowedTicketTypeIds = (session.allowed_ticket_type_ids ?? []) as string[];
   if (allowedTicketTypeIds.length && (!ticketTypeId || !allowedTicketTypeIds.includes(ticketTypeId))) {
@@ -367,6 +384,18 @@ async function validateSessionAccess({
 
 export async function getCheckInContext(): Promise<CheckInContextResponse> {
   if (!isServiceRoleConfigured()) {
+    if (!isDemoModeEnabled()) {
+      return {
+        ok: false,
+        message: "Check-in is not configured.",
+        events: [],
+        eventDays: [],
+        sessions: [],
+        ticketTypes: [],
+        initialAttendees: [],
+      };
+    }
+
     const firstEventId = demoEvents[0]?.id;
     const firstEventDayId = firstEventId ? demoEventDays.find((day) => day.event_id === firstEventId)?.id : null;
 
@@ -448,7 +477,7 @@ export async function getCheckInContext(): Promise<CheckInContextResponse> {
     supabase.from("sessions").select("*").in("event_id", eventIds).order("starts_at"),
     supabase.from("ticket_types").select("*").in("event_id", eventIds).order("price"),
   ]);
-  const eventDays = (eventDayRows ?? []) as EventDaySummary[];
+  const eventDays = eventDayRows?.length ? (eventDayRows as EventDaySummary[]) : buildFallbackEventDays(events);
   const initialEventDayId = eventDays.find((day) => day.event_id === events[0].id)?.id;
   const ticketTypes = await enrichCheckInTicketTypes(supabase, ticketTypeRows ?? [], eventDays);
   const initialAttendeeList = initialEventDayId
@@ -479,12 +508,14 @@ export async function runCheckIn(input: unknown): Promise<CheckInResult> {
   };
 
   if (!isServiceRoleConfigured()) {
+    if (!isDemoModeEnabled()) return { result: "not_authorized" };
     return demoCheckIn(values);
   }
 
   const headerStore = await headers();
   const supabase = createSupabaseAdminClient();
   const userId = await getCurrentUserId();
+  const usesFallbackDay = isFallbackEventDay(values.eventId, values.eventDayId);
 
   if (process.env.NODE_ENV === "production" && !userId) {
     return { result: "not_authorized" };
@@ -518,7 +549,9 @@ export async function runCheckIn(input: unknown): Promise<CheckInResult> {
     ticket.ticket_type_id
       ? supabase.from("ticket_types").select("id, name").eq("id", ticket.ticket_type_id).maybeSingle()
       : Promise.resolve({ data: null }),
-    supabase.from("event_days").select("id, event_id").eq("id", values.eventDayId).maybeSingle(),
+    usesFallbackDay
+      ? Promise.resolve({ data: { id: values.eventDayId, event_id: values.eventId } })
+      : supabase.from("event_days").select("id, event_id").eq("id", values.eventDayId).maybeSingle(),
   ]);
   const ticketType = ticketTypeResult.data;
 
@@ -568,15 +601,18 @@ export async function runCheckIn(input: unknown): Promise<CheckInResult> {
       return { result: sessionAccess.result, attendeeName: attendee?.full_name, ticketTypeName: ticketType?.name };
     }
 
-    const { data: dailyCheckIn } = await supabase
+    let dailyCheckInQuery = supabase
       .from("attendance_logs")
       .select("id")
       .eq("ticket_id", ticket.id)
       .eq("event_id", values.eventId)
-      .eq("event_day_id", values.eventDayId)
       .eq("scope", "event")
-      .is("session_id", null)
-      .maybeSingle();
+      .is("session_id", null);
+    if (!usesFallbackDay) {
+      dailyCheckInQuery = dailyCheckInQuery.eq("event_day_id", values.eventDayId);
+    }
+
+    const { data: dailyCheckIn } = await dailyCheckInQuery.maybeSingle();
 
     if (!dailyCheckIn) {
       await logAttempt("daily_check_in_required", ticket.id, ticket.organization_id);
@@ -589,9 +625,11 @@ export async function runCheckIn(input: unknown): Promise<CheckInResult> {
     .select("checked_in_at")
     .eq("ticket_id", ticket.id)
     .eq("event_id", values.eventId)
-    .eq("event_day_id", values.eventDayId)
     .eq("scope", values.sessionId ? "session" : "event")
     .limit(1);
+  if (!usesFallbackDay) {
+    existingQuery = existingQuery.eq("event_day_id", values.eventDayId);
+  }
 
   existingQuery = values.sessionId ? existingQuery.eq("session_id", values.sessionId) : existingQuery.is("session_id", null);
   const { data: existing } = await existingQuery.maybeSingle();
@@ -607,19 +645,23 @@ export async function runCheckIn(input: unknown): Promise<CheckInResult> {
   }
 
   const checkedInAt = new Date().toISOString();
-  const { error: insertError } = await supabase.from("attendance_logs").insert({
+  const attendancePayload: Record<string, unknown> = {
     organization_id: ticket.organization_id,
     ticket_id: ticket.id,
     registration_id: ticket.registration_id,
     attendee_id: ticket.attendee_id,
     event_id: values.eventId,
-    event_day_id: values.eventDayId,
     session_id: values.sessionId,
     scope: values.sessionId ? "session" : "event",
     checked_in_by: userId,
     checked_in_at: checkedInAt,
     device_user_agent: headerStore.get("user-agent"),
-  });
+  };
+  if (!usesFallbackDay) {
+    attendancePayload.event_day_id = values.eventDayId;
+  }
+
+  const { error: insertError } = await supabase.from("attendance_logs").insert(attendancePayload);
 
   if (insertError) {
     await logAttempt("duplicate", ticket.id, ticket.organization_id, { insert_error: insertError.message });
@@ -648,18 +690,21 @@ export async function runCheckIn(input: unknown): Promise<CheckInResult> {
   };
 
   async function logAttempt(result: CheckInResult["result"], ticketId?: string, organizationId?: string, metadata?: Record<string, unknown>) {
-    await supabase.from("check_in_attempts").insert({
+    const attemptPayload: Record<string, unknown> = {
       organization_id: organizationId,
       ticket_id: ticketId,
       attempted_by: userId,
       attempted_code: values.ticketCode,
       event_id: values.eventId,
-      event_day_id: values.eventDayId,
       session_id: values.sessionId,
       result,
       metadata: metadata ?? {},
       user_agent: headerStore.get("user-agent"),
-    });
+    };
+    if (!usesFallbackDay) {
+      attemptPayload.event_day_id = values.eventDayId;
+    }
+    await supabase.from("check_in_attempts").insert(attemptPayload);
   }
 }
 
@@ -672,6 +717,7 @@ export async function searchCheckInGuests(input: unknown): Promise<CheckInLookup
   const values = parsed.data;
 
   if (!isServiceRoleConfigured()) {
+    if (!isDemoModeEnabled()) return { ok: false, message: "Check-in search is not configured.", results: [] };
     return demoLookup(values);
   }
 
@@ -823,6 +869,10 @@ export async function listCheckInAttendees(input: unknown): Promise<CheckInAtten
   const values = parsed.data;
 
   if (!isServiceRoleConfigured()) {
+    if (!isDemoModeEnabled()) {
+      return { ok: false, message: "Check-in attendees are not configured.", attendees: [] };
+    }
+
     return demoCheckInAttendeeList(values);
   }
 
@@ -858,7 +908,7 @@ export async function listCheckInAttendees(input: unknown): Promise<CheckInAtten
   const { data: selectedSession } = values.sessionId
     ? await supabase
         .from("sessions")
-        .select("id, event_day_id, requires_registration, allowed_ticket_type_ids")
+        .select("*")
         .eq("id", values.sessionId)
         .eq("event_id", values.eventId)
         .maybeSingle()
@@ -956,6 +1006,10 @@ export async function createWalkUpCheckIn(input: unknown): Promise<WalkUpCheckIn
   const values = parsed.data;
 
   if (!isServiceRoleConfigured()) {
+    if (!isDemoModeEnabled()) {
+      return { ok: false, result: "not_authorized", message: "Walk-up check-in is not configured." };
+    }
+
     return demoWalkUp(values);
   }
 
@@ -1121,9 +1175,11 @@ async function fetchAttendanceLogs(
     .from("attendance_logs")
     .select("ticket_id, checked_in_at")
     .eq("event_id", eventId)
-    .eq("event_day_id", eventDayId)
     .eq("scope", sessionId ? "session" : "event")
     .in("ticket_id", ticketIds);
+  if (!isFallbackEventDay(eventId, eventDayId)) {
+    query = query.eq("event_day_id", eventDayId);
+  }
 
   query = sessionId ? query.eq("session_id", sessionId) : query.is("session_id", null);
   const { data } = await query;
@@ -1141,10 +1197,12 @@ async function fetchAttendanceLogsByRegistration(
     .from("attendance_logs")
     .select("registration_id, checked_in_at")
     .eq("event_id", eventId)
-    .eq("event_day_id", eventDayId)
     .eq("scope", sessionId ? "session" : "event")
     .in("registration_id", registrationIds)
     .order("checked_in_at", { ascending: false });
+  if (!isFallbackEventDay(eventId, eventDayId)) {
+    query = query.eq("event_day_id", eventDayId);
+  }
 
   query = sessionId ? query.eq("session_id", sessionId) : query.is("session_id", null);
   const { data } = await query;
@@ -1162,7 +1220,7 @@ async function fetchTicketAccessContext(
       ? supabase.from("ticket_type_day_access").select("ticket_type_id, event_day_id").in("ticket_type_id", ticketTypeIds)
       : Promise.resolve({ data: [] as { ticket_type_id: string; event_day_id: string }[] }),
   ]);
-  const allEventDayIds = (eventDays ?? []).map((day) => day.id as string);
+  const allEventDayIds = eventDays?.length ? eventDays.map((day) => day.id as string) : [eventId];
   const accessByTicketTypeId = new Map<string, string[]>();
 
   for (const row of accessRows ?? []) {

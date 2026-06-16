@@ -1,4 +1,4 @@
-import { isServiceRoleConfigured } from "@/lib/env";
+import { isDemoModeEnabled, isServiceRoleConfigured } from "@/lib/env";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type { EmailTemplateSummary } from "@/lib/types";
 
@@ -94,7 +94,7 @@ export function demoEmailTemplates(organizationId: string): EmailTemplateSummary
 }
 
 export async function ensureDefaultEmailTemplates(organizationId: string) {
-  if (!isServiceRoleConfigured()) return demoEmailTemplates(organizationId);
+  if (!isServiceRoleConfigured()) return isDemoModeEnabled() ? demoEmailTemplates(organizationId) : [];
 
   const supabase = createSupabaseAdminClient();
   const { data: existingTemplates } = await supabase
@@ -126,7 +126,7 @@ export async function ensureDefaultEmailTemplates(organizationId: string) {
 
 export async function getEmailTemplateForSend(organizationId: string, name: string) {
   if (!isServiceRoleConfigured()) {
-    return DEFAULT_EMAIL_TEMPLATES.find((template) => template.name === name) ?? null;
+    return isDemoModeEnabled() ? DEFAULT_EMAIL_TEMPLATES.find((template) => template.name === name) ?? null : null;
   }
 
   const supabase = createSupabaseAdminClient();

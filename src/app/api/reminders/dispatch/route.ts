@@ -1,8 +1,13 @@
 import { NextResponse } from "next/server";
 import { isServiceRoleConfigured } from "@/lib/env";
+import { isAuthorizedCronRequest } from "@/lib/security/request";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
-export async function POST() {
+export async function POST(request: Request) {
+  if (!isAuthorizedCronRequest(request)) {
+    return NextResponse.json({ ok: false, message: "Unauthorized dispatch." }, { status: 401 });
+  }
+
   if (!isServiceRoleConfigured()) {
     return NextResponse.json({ ok: true, message: "Reminder dispatch simulated.", sent: 0 });
   }

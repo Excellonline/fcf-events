@@ -36,7 +36,7 @@ export default async function TicketPage({ params }: { params: Promise<{ ticketC
           <Button asChild variant="outline">
             <Link href="/">FCF Events</Link>
           </Button>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
+          <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
             <PrintTicketButton />
             <AddToCalendarButton
               title={ticket.event_title}
@@ -46,6 +46,7 @@ export default async function TicketPage({ params }: { params: Promise<{ ticketC
               description={`${ticket.event_description}\n\nTicket code: ${ticket.ticket_code}`}
               url={url}
               fileName={`${ticket.event_slug}-ticket.ics`}
+              className="w-full sm:w-auto"
             />
             <SendTicketEmailForm ticketCode={decoded} defaultEmail={ticket.attendee_email} />
           </div>
@@ -56,7 +57,7 @@ export default async function TicketPage({ params }: { params: Promise<{ ticketC
             <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
               <div>
                 <Badge className="mb-3 print:border print:border-black print:bg-white print:text-black">FCF Event Ticket</Badge>
-                <h1 className="text-3xl font-semibold leading-tight text-white print:text-black md:text-4xl">
+                <h1 className="text-2xl font-semibold leading-tight text-white print:text-black sm:text-3xl md:text-4xl">
                   {ticket.event_title}
                 </h1>
                 <p className="mt-3 max-w-2xl text-sm leading-6 text-[#bbbbbb] print:text-gray-700">

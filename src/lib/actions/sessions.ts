@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { requireDashboardAccess } from "@/lib/auth";
 import { isServiceRoleConfigured } from "@/lib/env";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { sessionUpdateSchema } from "@/lib/validation";
@@ -11,6 +12,7 @@ function checkboxValue(value: FormDataEntryValue | null) {
 }
 
 export async function updateSessionAction(input: FormData) {
+  const access = await requireDashboardAccess(["owner", "admin", "manager"]);
   const parsed = sessionUpdateSchema.safeParse({
     sessionId: input.get("sessionId"),
     eventId: input.get("eventId"),
@@ -114,6 +116,7 @@ export async function updateSessionAction(input: FormData) {
 
   await writeAuditLog({
     organizationId: existingSession.organization_id,
+    actorUserId: access.userId ?? undefined,
     action: "session.updated",
     entityType: "session",
     entityId: existingSession.id,

@@ -1,8 +1,8 @@
 "use server";
 
 import { differenceInYears } from "date-fns";
-import { isServiceRoleConfigured } from "@/lib/env";
-import { demoEvents, demoOrganizationId } from "@/lib/demo-data";
+import { isDemoModeEnabled, isServiceRoleConfigured } from "@/lib/env";
+import { demoEvents } from "@/lib/demo-data";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { logEmailSend } from "@/lib/email/logging";
 import { sendRegistrationConfirmationEmail } from "@/lib/email/registration-confirmation";
@@ -22,6 +22,7 @@ export async function registerForEvent(input: unknown): Promise<RegistrationResu
   const age = differenceInYears(new Date(), new Date(values.dateOfBirth));
 
   if (!isServiceRoleConfigured()) {
+    if (!isDemoModeEnabled()) return { ok: false, message: "Registration is not configured." };
     if (age < 19) return { ok: false, message: "You must meet the event age requirement." };
     return { ok: true, ticketCode: createTicketCode(), message: "Demo registration confirmed." };
   }
@@ -280,8 +281,4 @@ export async function registerForEvent(input: unknown): Promise<RegistrationResu
   });
 
   return { ok: true, ticketCode, message };
-}
-
-export async function demoTicketOrganizationId() {
-  return demoOrganizationId;
 }

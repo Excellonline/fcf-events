@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { env } from "@/lib/env";
 import { processZeffyCompletedPayment } from "@/lib/payments/zeffy";
+import { isAuthorizedSharedSecret } from "@/lib/security/request";
 import { listZeffyPayments } from "@/lib/zeffy";
 
 export async function POST(request: Request) {
@@ -43,9 +44,5 @@ export async function POST(request: Request) {
 }
 
 function isAuthorizedSync(request: Request) {
-  if (!env.zeffySyncSecret) return process.env.NODE_ENV !== "production";
-
-  const url = new URL(request.url);
-  const suppliedSecret = request.headers.get("x-zeffy-sync-secret") ?? url.searchParams.get("token");
-  return suppliedSecret === env.zeffySyncSecret;
+  return isAuthorizedSharedSecret(request, env.zeffySyncSecret, "x-zeffy-sync-secret");
 }
