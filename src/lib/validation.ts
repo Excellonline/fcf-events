@@ -214,6 +214,15 @@ export const ticketTypeSchema = z.object({
   visibility: z.enum(["public", "private", "hidden"]).default("public"),
 });
 
+export const ticketTypeDraftSchema = ticketTypeSchema.omit({
+  id: true,
+  eventId: true,
+});
+
+export const eventTicketTypesCreateSchema = z
+  .array(ticketTypeDraftSchema)
+  .max(20, "Add 20 or fewer ticket types.");
+
 export const discountTypeSchema = z.enum(["percentage", "fixed_amount", "comp", "access_only"]);
 
 export const discountCodeSchema = z

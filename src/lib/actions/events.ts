@@ -5,7 +5,13 @@ import { requireDashboardAccess } from "@/lib/auth";
 import { isServiceRoleConfigured } from "@/lib/env";
 import { demoOrganizationId } from "@/lib/demo-data";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { eventSchema, eventUpdateSchema, ticketTypeSchema, zeffyEventSettingsSchema } from "@/lib/validation";
+import {
+  eventSchema,
+  eventTicketTypesCreateSchema,
+  eventUpdateSchema,
+  ticketTypeSchema,
+  zeffyEventSettingsSchema,
+} from "@/lib/validation";
 import { writeAuditLog } from "@/lib/audit";
 import type { Role } from "@/lib/types";
 
@@ -18,6 +24,7 @@ type ActionResult = {
 
 export async function createEventAction(input: FormData) {
   const zeffyFields = readZeffyFields(input);
+  const ticketTypes = readTicketTypeDraftForms(input);
   const parsed = eventSchema.safeParse({
     title: input.get("title"),
     slug: input.get("slug"),
@@ -34,16 +41,22 @@ export async function createEventAction(input: FormData) {
     minimumAge: input.get("minimumAge"),
     ...zeffyFields,
   });
+  const parsedTicketTypes = eventTicketTypesCreateSchema.safeParse(ticketTypes);
 
   if (!parsed.success) {
     return { ok: false, message: parsed.error.issues[0]?.message ?? "Invalid event." };
   }
 
+  if (!parsedTicketTypes.success) {
+    return { ok: false, message: parsedTicketTypes.error.issues[0]?.message ?? "Invalid ticket types." };
+  }
+
   if (!isServiceRoleConfigured()) {
-    return { ok: true, message: "Event validated. Connect Supabase to persist it." };
+    return { ok: true, message: "Event and ticket types validated. Connect Supabase to persist them.", persisted: false };
   }
 
   const values = parsed.data;
+  const ticketTypeValues = parsedTicketTypes.data;
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase
     .from("events")
@@ -70,11 +83,27 @@ export async function createEventAction(input: FormData) {
 
   if (error) return { ok: false, message: error.message };
 
+  if (ticketTypeValues.length) {
+    const { error: ticketTypeError } = await supabase.from("ticket_types").insert(
+      ticketTypeValues.map((ticketType) => ({
+        organization_id: demoOrganizationId,
+        event_id: data.id,
+        ...toTicketTypePayload(ticketType),
+      })),
+    );
+
+    if (ticketTypeError) {
+      await supabase.from("events").delete().eq("id", data.id).eq("organization_id", demoOrganizationId);
+      return { ok: false, message: ticketTypeError.message };
+    }
+  }
+
   await writeAuditLog({
     organizationId: demoOrganizationId,
     action: "event.created",
     entityType: "event",
     entityId: data.id,
+    metadata: { ticketTypeCount: ticketTypeValues.length },
   });
 
   revalidatePath("/");
@@ -83,7 +112,12 @@ export async function createEventAction(input: FormData) {
   revalidatePath("/dashboard/check-in");
   revalidatePath("/check-in");
   revalidatePath(`/e/${values.slug}`);
-  return { ok: true, message: "Event created." };
+  return {
+    ok: true,
+    message: ticketTypeValues.length ? "Event and ticket types created." : "Event created.",
+    persisted: true,
+    slug: values.slug,
+  };
 }
 
 export async function updateEventAction(input: FormData) {
@@ -329,7 +363,16 @@ function readTicketTypeForm(input: FormData, options?: { requireId?: boolean }) 
   };
 }
 
-function toTicketTypePayload(values: ReturnType<typeof ticketTypeSchema.parse>) {
+type TicketTypePayloadValues = {
+  name: string;
+  description?: string;
+  price: number;
+  currency: string;
+  capacityLimit?: number;
+  visibility: "public" | "private" | "hidden";
+};
+
+function toTicketTypePayload(values: TicketTypePayloadValues) {
   return {
     name: values.name,
     description: values.description || "",
@@ -339,6 +382,41 @@ function toTicketTypePayload(values: ReturnType<typeof ticketTypeSchema.parse>) 
     visibility: values.visibility,
     payment_method: values.price === 0 ? "free" : "manual",
   };
+}
+
+function readTicketTypeDraftForms(input: FormData) {
+  const names = input.getAll("ticketName");
+  const descriptions = input.getAll("ticketDescription");
+  const prices = input.getAll("ticketPrice");
+  const currencies = input.getAll("ticketCurrency");
+  const capacityLimits = input.getAll("ticketCapacityLimit");
+  const visibilities = input.getAll("ticketVisibility");
+  const count = Math.max(
+    names.length,
+    descriptions.length,
+    prices.length,
+    currencies.length,
+    capacityLimits.length,
+    visibilities.length,
+  );
+
+  return Array.from({ length: count }).flatMap((_, index) => {
+    const name = String(names[index] ?? "").trim();
+    const description = String(descriptions[index] ?? "").trim();
+    const price = String(prices[index] ?? "").trim();
+    const capacityLimit = String(capacityLimits[index] ?? "").trim();
+
+    if (!name && !description && !price && !capacityLimit) return [];
+
+    return {
+      name,
+      description,
+      price,
+      currency: String(currencies[index] ?? "CAD"),
+      capacityLimit,
+      visibility: String(visibilities[index] ?? "public"),
+    };
+  });
 }
 
 function revalidateTicketTypePaths(eventSlug: string) {
