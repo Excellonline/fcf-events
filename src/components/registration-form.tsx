@@ -11,12 +11,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SelectField } from "@/components/ui/select-field";
-import { registerForEvent } from "@/lib/actions/registration";
 import { registrationSchema } from "@/lib/validation";
 import { currency } from "@/lib/utils";
 import type { EventSummary, SessionSummary, TicketTypeSummary } from "@/lib/types";
 
-type RegistrationValues = z.infer<typeof registrationSchema>;
+type RegistrationValues = z.input<typeof registrationSchema>;
 
 export function RegistrationForm({
   event,
@@ -33,7 +32,7 @@ export function RegistrationForm({
     resolver: zodResolver(registrationSchema),
     defaultValues: {
       eventId: event.id,
-      ticketTypeId: ticketTypes[0]?.id,
+      ticketTypeId: ticketTypes[0]?.id ?? "",
       sessionIds: [],
       firstName: "",
       lastName: "",
@@ -51,7 +50,12 @@ export function RegistrationForm({
 
   function onSubmit(values: RegistrationValues) {
     startTransition(async () => {
-      const result = await registerForEvent(values);
+      const response = await fetch("/api/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(values),
+      });
+      const result = (await response.json()) as { ok: boolean; ticketCode?: string; message: string };
       if (!result.ok || !result.ticketCode) {
         toast.error(result.message);
         return;
@@ -158,4 +162,3 @@ function Field({ label, error, children }: { label: string; error?: string; chil
     </div>
   );
 }
-

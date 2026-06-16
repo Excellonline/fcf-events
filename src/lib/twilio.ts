@@ -1,17 +1,10 @@
-import twilio from "twilio";
+import { env } from "@/lib/env";
+import { sendTwilioSms } from "@/lib/sms/twilio";
 
 type SmsInput = {
   body: string;
   to: string;
 };
-
-type TwilioSender =
-  | {
-      from: string;
-    }
-  | {
-      messagingServiceSid: string;
-    };
 
 export class TwilioConfigurationError extends Error {
   constructor(message: string) {
@@ -30,31 +23,32 @@ function readRequiredEnv(name: string): string {
   return value;
 }
 
-function readSender(): TwilioSender {
-  const messagingServiceSid = process.env.TWILIO_MESSAGING_SERVICE_SID?.trim();
-  const from = process.env.TWILIO_FROM_NUMBER?.trim();
-
-  if (messagingServiceSid) {
-    return { messagingServiceSid };
-  }
-
-  if (from) {
-    return { from };
-  }
-
-  throw new TwilioConfigurationError(
-    "Missing TWILIO_FROM_NUMBER or TWILIO_MESSAGING_SERVICE_SID.",
-  );
-}
-
 export async function sendSms({ body, to }: SmsInput) {
   const accountSid = readRequiredEnv("TWILIO_ACCOUNT_SID");
   const authToken = readRequiredEnv("TWILIO_AUTH_TOKEN");
-  const client = twilio(accountSid, authToken);
+  const from = process.env.TWILIO_FROM_NUMBER?.trim();
+  const messagingServiceSid = process.env.TWILIO_MESSAGING_SERVICE_SID?.trim();
 
-  return client.messages.create({
-    body,
+  if (!from && !messagingServiceSid) {
+    throw new TwilioConfigurationError("Missing TWILIO_FROM_NUMBER or TWILIO_MESSAGING_SERVICE_SID.");
+  }
+
+  const result = await sendTwilioSms({
+    accountSid,
+    authToken,
+    from,
+    messagingServiceSid,
     to,
-    ...readSender(),
+    body,
+    statusCallback: `${env.appUrl.replace(/\/$/, "")}/api/twilio/status`,
   });
+
+  if (result.error) {
+    throw new Error(result.error);
+  }
+
+  return {
+    sid: result.sid,
+    status: result.status,
+  };
 }

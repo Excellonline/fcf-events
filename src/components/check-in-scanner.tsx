@@ -8,7 +8,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SelectField } from "@/components/ui/select-field";
-import { runCheckIn } from "@/lib/actions/check-in";
 import type { CheckInResult, EventSummary, SessionSummary } from "@/lib/types";
 
 export function CheckInScanner({ events, sessions }: { events: EventSummary[]; sessions: SessionSummary[] }) {
@@ -48,12 +47,17 @@ export function CheckInScanner({ events, sessions }: { events: EventSummary[]; s
 
   function submit(code = ticketCode) {
     startTransition(async () => {
-      const response = await runCheckIn({
-        eventId,
-        sessionId: sessionId || null,
-        ticketCode: code.trim(),
+      const response = await fetch("/api/check-in", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          eventId,
+          sessionId: sessionId || null,
+          ticketCode: code.trim(),
+        }),
       });
-      setResult(response);
+      const data = (await response.json()) as CheckInResult;
+      setResult(data);
     });
   }
 
@@ -134,4 +138,3 @@ export function CheckInScanner({ events, sessions }: { events: EventSummary[]; s
     </div>
   );
 }
-

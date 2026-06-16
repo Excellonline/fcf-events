@@ -628,7 +628,7 @@ begin
     return;
   end if;
 
-  if not public.has_org_role(v_ticket.organization_id, array['owner','admin','manager','check_in_staff']::app_role[]) then
+  if not (public.has_org_role(v_ticket.organization_id, array['owner','admin','manager','check_in_staff']::app_role[]) or auth.role() = 'service_role') then
     insert into public.check_in_attempts(organization_id, ticket_id, attempted_by, attempted_code, event_id, session_id, result, user_agent)
     values (v_ticket.organization_id, v_ticket.id, auth.uid(), p_ticket_code, p_event_id, p_session_id, 'not_authorized', p_user_agent);
     return query select 'not_authorized', null::text, null::text, null::timestamptz, null::timestamptz;
@@ -744,9 +744,11 @@ begin
     'inbound_sms_events','email_templates','email_sends','airtable_configs','airtable_field_mappings',
     'airtable_sync_logs','audit_logs'
   ] loop
-    execute format('create trigger %I_set_updated_at before update on public.%I for each row execute function public.set_updated_at()', t, t);
-  exception when duplicate_object then
-    null;
+    begin
+      execute format('create trigger %I_set_updated_at before update on public.%I for each row execute function public.set_updated_at()', t, t);
+    exception when duplicate_object then
+      null;
+    end;
   end loop;
 end $$;
 
@@ -867,10 +869,12 @@ begin
     'reminder_schedules','message_campaigns','inbound_sms_events','email_templates','email_sends',
     'airtable_configs','airtable_field_mappings','airtable_sync_logs'
   ] loop
-    execute format('create policy "members read %1$I" on public.%1$I for select using (public.has_org_role(organization_id, array[''owner'',''admin'',''manager'',''check_in_staff'',''viewer'']::app_role[]))', t);
-    execute format('create policy "staff manage %1$I" on public.%1$I for all using (public.has_org_role(organization_id, array[''owner'',''admin'',''manager'']::app_role[])) with check (public.has_org_role(organization_id, array[''owner'',''admin'',''manager'']::app_role[]))', t);
-  exception when duplicate_object then
-    null;
+    begin
+      execute format('create policy "members read %1$I" on public.%1$I for select using (public.has_org_role(organization_id, array[''owner'',''admin'',''manager'',''check_in_staff'',''viewer'']::app_role[]))', t);
+      execute format('create policy "staff manage %1$I" on public.%1$I for all using (public.has_org_role(organization_id, array[''owner'',''admin'',''manager'']::app_role[])) with check (public.has_org_role(organization_id, array[''owner'',''admin'',''manager'']::app_role[]))', t);
+    exception when duplicate_object then
+      null;
+    end;
   end loop;
 end $$;
 
@@ -882,11 +886,11 @@ create index message_sends_status_idx on public.message_sends (organization_id, 
 create index audit_logs_org_created_idx on public.audit_logs (organization_id, created_at desc);
 
 insert into public.organizations (id, name, slug, contact_email)
-values ('11111111-1111-1111-1111-111111111111', 'FCF Events', 'fcf', 'ops@example.com')
+values ('11111111-1111-4111-8111-111111111111', 'FCF Events', 'fcf', 'ops@example.com')
 on conflict (slug) do nothing;
 
 insert into public.venues (id, organization_id, name, address, room, city, province)
-values ('22222222-2222-2222-2222-222222222222', '11111111-1111-1111-1111-111111111111', 'Metro Toronto Convention Centre', '255 Front St W', 'North Building', 'Toronto', 'ON')
+values ('22222222-2222-4222-8222-222222222222', '11111111-1111-4111-8111-111111111111', 'Metro Toronto Convention Centre', '255 Front St W', 'North Building', 'Toronto', 'ON')
 on conflict do nothing;
 
 insert into public.events (
@@ -894,9 +898,9 @@ insert into public.events (
   description, capacity, status, visibility, registration_opens_at, registration_closes_at,
   event_category, compliance_notes, minimum_age, organizer_contact
 ) values (
-  '33333333-3333-3333-3333-333333333333',
-  '11111111-1111-1111-1111-111111111111',
-  '22222222-2222-2222-2222-222222222222',
+  '33333333-3333-4333-8333-333333333333',
+  '11111111-1111-4111-8111-111111111111',
+  '22222222-2222-4222-8222-222222222222',
   'FCF Cannabis Business Conference',
   'fcf-business-conference',
   now() + interval '30 days',
@@ -918,20 +922,20 @@ insert into public.events (
 
 insert into public.sessions (id, organization_id, event_id, title, slug, description, speakers, room, starts_at, ends_at, capacity, status, type, requires_registration)
 values
-('44444444-4444-4444-4444-444444444441','11111111-1111-1111-1111-111111111111','33333333-3333-3333-3333-333333333333','Compliance Operations Panel','compliance-operations-panel','Practical operations guardrails for Canadian cannabis events.',array['A. Morgan','S. Patel'],'Stage A',now() + interval '30 days 2 hours',now() + interval '30 days 3 hours',150,'published','panel',true),
-('44444444-4444-4444-4444-444444444442','11111111-1111-1111-1111-111111111111','33333333-3333-3333-3333-333333333333','Retail Networking Seminar','retail-networking-seminar','Structured networking for retailers and operators.',array['J. Chen'],'Room 201',now() + interval '30 days 4 hours',now() + interval '30 days 5 hours',120,'published','networking',true)
+('44444444-4444-4444-8444-444444444441','11111111-1111-4111-8111-111111111111','33333333-3333-4333-8333-333333333333','Compliance Operations Panel','compliance-operations-panel','Practical operations guardrails for Canadian cannabis events.',array['A. Morgan','S. Patel'],'Stage A',now() + interval '30 days 2 hours',now() + interval '30 days 3 hours',150,'published','panel',true),
+('44444444-4444-4444-8444-444444444442','11111111-1111-4111-8111-111111111111','33333333-3333-4333-8333-333333333333','Retail Networking Seminar','retail-networking-seminar','Structured networking for retailers and operators.',array['J. Chen'],'Room 201',now() + interval '30 days 4 hours',now() + interval '30 days 5 hours',120,'published','networking',true)
 on conflict (event_id, slug) do nothing;
 
 insert into public.ticket_types (id, organization_id, event_id, name, description, price, currency, capacity_limit, visibility, payment_method)
 values
-('55555555-5555-5555-5555-555555555551','11111111-1111-1111-1111-111111111111','33333333-3333-3333-3333-333333333333','General Admission','Standard conference access.',99,'CAD',350,'public','manual'),
-('55555555-5555-5555-5555-555555555552','11111111-1111-1111-1111-111111111111','33333333-3333-3333-3333-333333333333','VIP','Includes VIP networking access.',249,'CAD',75,'public','manual'),
-('55555555-5555-5555-5555-555555555553','11111111-1111-1111-1111-111111111111','33333333-3333-3333-3333-333333333333','Speaker','Speaker and moderator access.',0,'CAD',50,'hidden','comped')
+('55555555-5555-4555-8555-555555555551','11111111-1111-4111-8111-111111111111','33333333-3333-4333-8333-333333333333','General Admission','Standard conference access.',99,'CAD',350,'public','manual'),
+('55555555-5555-4555-8555-555555555552','11111111-1111-4111-8111-111111111111','33333333-3333-4333-8333-333333333333','VIP','Includes VIP networking access.',249,'CAD',75,'public','manual'),
+('55555555-5555-4555-8555-555555555553','11111111-1111-4111-8111-111111111111','33333333-3333-4333-8333-333333333333','Speaker','Speaker and moderator access.',0,'CAD',50,'hidden','comped')
 on conflict do nothing;
 
 insert into public.sms_templates (organization_id, name, purpose, body, is_default)
 values (
-  '11111111-1111-1111-1111-111111111111',
+  '11111111-1111-4111-8111-111111111111',
   'Default 24 hour reminder',
   'event_reminder',
   'Hey {{first_name}}. Your FCF event spot at {{event}} is confirmed for {{event_start_time}} at {{venue}}. Reply STOP to unsubscribe.',

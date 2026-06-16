@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -24,6 +25,16 @@ export function DashboardCharts({
   registrationTrend: { date: string; registrations: number; checkins: number }[];
   ticketBreakdown: { name: string; value: number }[];
 }) {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  if (!mounted) {
+    return <div className="grid gap-4 lg:grid-cols-[1.4fr_0.8fr]"><Card className="h-96" /><Card className="h-96" /></div>;
+  }
+
   return (
     <div className="grid gap-4 lg:grid-cols-[1.4fr_0.8fr]">
       <Card>
@@ -64,4 +75,3 @@ export function DashboardCharts({
     </div>
   );
 }
-

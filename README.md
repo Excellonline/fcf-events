@@ -1,56 +1,46 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# FCF Events
 
-## Getting Started
+Private event operations MVP for FCF: event management, sessions, registration, QR tickets, staff check-in, attendee CRM, analytics, SMS reminders, Airtable sync, and audit logs.
 
-First, run the development server:
+## Stack
+- Next.js 15 App Router
+- TypeScript
+- Tailwind CSS
+- shadcn-style Radix UI primitives
+- Supabase Auth, PostgreSQL, Storage, Edge Function-ready schema
+- React Hook Form + Zod
+- Recharts
+- lucide-react
+- react-qr-code
+- html5-qrcode
+- date-fns
+- sonner
+- next-themes
 
+`@twilio/rest` is not published on npm, so this MVP uses a server-only Twilio REST adapter with `fetch` rather than silently adding the separate `twilio` package.
+
+## Run
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://localhost:3000`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-## Twilio SMS
-
-Server-side SMS sending is available at `POST /api/twilio/sms`.
-
-Required environment variables:
-
-- `TWILIO_ACCOUNT_SID`
-- `TWILIO_AUTH_TOKEN`
-- `TWILIO_FROM_NUMBER` or `TWILIO_MESSAGING_SERVICE_SID`
-
-Example request:
-
+## Verify
 ```bash
-curl -X POST http://localhost:3000/api/twilio/sms \
-  -H "Content-Type: application/json" \
-  -d "{\"to\":\"+15555555555\",\"body\":\"Your event reminder is ready.\"}"
+npm run lint
+npm run build
 ```
 
-Twilio trial accounts can only send to verified recipient numbers, and SMS sending also requires a Twilio-owned SMS-capable phone number or a Messaging Service.
+## Setup
+- Copy `.env.example` to `.env.local`.
+- Apply `supabase/schema.sql` to Supabase.
+- Read `docs/setup.md` for Supabase, Twilio, Airtable, Vercel, scheduled reminder, and QR scanner setup.
+- Read `docs/qa-checklists.md` before launch.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Important Limitations
+- Payments are future-provider/manual only. Stripe is intentionally not included.
+- Email sending is adapter-only and marked `TODO_EXTERNAL_PROVIDER_REQUIRED`.
+- Ticket PDF export uses browser print/save.
+- Twilio credentials and Airtable tokens require `APP_ENCRYPTION_KEY` before production storage.

@@ -8,11 +8,11 @@ import type {
 
 const now = Date.now();
 
-export const demoOrganizationId = "11111111-1111-1111-1111-111111111111";
+export const demoOrganizationId = "11111111-1111-4111-8111-111111111111";
 
 export const demoEvents: EventSummary[] = [
   {
-    id: "33333333-3333-3333-3333-333333333333",
+    id: "33333333-3333-4333-8333-333333333333",
     organization_id: demoOrganizationId,
     title: "FCF Cannabis Business Conference",
     slug: "fcf-business-conference",
@@ -32,7 +32,7 @@ export const demoEvents: EventSummary[] = [
       "Organizer must confirm applicable federal, provincial, territorial, and venue rules.",
   },
   {
-    id: "33333333-3333-3333-3333-333333333334",
+    id: "33333333-3333-4333-8333-333333333334",
     organization_id: demoOrganizationId,
     title: "FCF Retail Operators Night",
     slug: "fcf-retail-operators-night",
@@ -53,7 +53,7 @@ export const demoEvents: EventSummary[] = [
 
 export const demoSessions: SessionSummary[] = [
   {
-    id: "44444444-4444-4444-4444-444444444441",
+    id: "44444444-4444-4444-8444-444444444441",
     event_id: demoEvents[0].id,
     title: "Compliance Operations Panel",
     slug: "compliance-operations-panel",
@@ -65,7 +65,7 @@ export const demoSessions: SessionSummary[] = [
     requires_registration: true,
   },
   {
-    id: "44444444-4444-4444-4444-444444444442",
+    id: "44444444-4444-4444-8444-444444444442",
     event_id: demoEvents[0].id,
     title: "Retail Networking Seminar",
     slug: "retail-networking-seminar",
@@ -80,7 +80,7 @@ export const demoSessions: SessionSummary[] = [
 
 export const demoTicketTypes: TicketTypeSummary[] = [
   {
-    id: "55555555-5555-5555-5555-555555555551",
+    id: "55555555-5555-4555-8555-555555555551",
     event_id: demoEvents[0].id,
     name: "General Admission",
     description: "Standard conference access.",
@@ -90,7 +90,7 @@ export const demoTicketTypes: TicketTypeSummary[] = [
     visibility: "public",
   },
   {
-    id: "55555555-5555-5555-5555-555555555552",
+    id: "55555555-5555-4555-8555-555555555552",
     event_id: demoEvents[0].id,
     name: "VIP",
     description: "Includes VIP networking access.",
@@ -103,7 +103,7 @@ export const demoTicketTypes: TicketTypeSummary[] = [
 
 export const demoAttendees: AttendeeSummary[] = [
   {
-    id: "66666666-6666-6666-6666-666666666661",
+    id: "66666666-6666-4666-8666-666666666661",
     first_name: "Maya",
     last_name: "Reed",
     full_name: "Maya Reed",
@@ -120,7 +120,7 @@ export const demoAttendees: AttendeeSummary[] = [
     last_attended_at: new Date(now - 1000 * 60 * 60 * 24 * 90).toISOString(),
   },
   {
-    id: "66666666-6666-6666-6666-666666666662",
+    id: "66666666-6666-4666-8666-666666666662",
     first_name: "Andre",
     last_name: "Singh",
     full_name: "Andre Singh",
@@ -164,4 +164,3 @@ export const demoTicketBreakdown = [
   { name: "Speaker", value: 18 },
   { name: "Press", value: 11 },
 ];
-
