@@ -29,6 +29,7 @@ export function RegistrationForm({
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  const hasTicketTypes = ticketTypes.length > 0;
   const form = useForm<RegistrationValues>({
     resolver: zodResolver(registrationSchema),
     defaultValues: {
@@ -86,6 +87,11 @@ export function RegistrationForm({
         <CardTitle>Register</CardTitle>
       </CardHeader>
       <CardContent>
+        {!hasTicketTypes ? (
+          <div className="rounded-md border border-dashed border-white/15 p-4 text-sm text-[#999999]">
+            Tickets are not available yet.
+          </div>
+        ) : (
         <form className="space-y-4" onSubmit={form.handleSubmit(onSubmit)}>
           <input type="hidden" {...form.register("eventId")} />
           <div className="space-y-2">
@@ -94,7 +100,7 @@ export function RegistrationForm({
               {...form.register("ticketTypeId")}
               options={ticketTypes.map((ticket) => ({
                 value: ticket.id,
-                label: `${ticket.name} · ${currency(ticket.price, ticket.currency)}`,
+                label: `${ticket.name} - ${currency(ticket.price, ticket.currency)}`,
               }))}
             />
           </div>
@@ -163,6 +169,7 @@ export function RegistrationForm({
             Complete Registration
           </Button>
         </form>
+        )}
       </CardContent>
     </Card>
   );
