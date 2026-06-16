@@ -38,3 +38,14 @@ export function googleMapsSearchUrl(query: string | null | undefined) {
 
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(normalizedQuery)}`;
 }
+
+export function formatPhoneNumber(value: string) {
+  const digits = value.replace(/\D/g, "");
+  const localDigits = digits.length === 11 && digits.startsWith("1") ? digits.slice(1) : digits;
+  const trimmedDigits = localDigits.slice(0, 10);
+
+  if (trimmedDigits.length <= 3) return trimmedDigits;
+  if (trimmedDigits.length <= 6) return `(${trimmedDigits.slice(0, 3)}) ${trimmedDigits.slice(3)}`;
+
+  return `(${trimmedDigits.slice(0, 3)}) ${trimmedDigits.slice(3, 6)}-${trimmedDigits.slice(6)}`;
+}

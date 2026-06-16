@@ -1,25 +1,118 @@
 "use client";
 
-import { useEffect, useId, useState, useTransition } from "react";
-import { Camera, Keyboard, Search } from "lucide-react";
+import { FormEvent, ReactNode, useCallback, useEffect, useId, useMemo, useState, useTransition } from "react";
+import { Camera, CheckCircle2, Keyboard, Mail, Phone, Search, TicketCheck, UserPlus, XCircle } from "lucide-react";
 import { Html5Qrcode } from "html5-qrcode";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PhoneInput } from "@/components/phone-input";
 import { SelectField } from "@/components/ui/select-field";
-import type { CheckInResult, EventSummary, SessionSummary } from "@/lib/types";
+import type {
+  CheckInLookupResponse,
+  CheckInLookupResult,
+  CheckInResult,
+  EventSummary,
+  SessionSummary,
+  TicketTypeSummary,
+  WalkUpCheckInResult,
+} from "@/lib/types";
 
-export function CheckInScanner({ events, sessions }: { events: EventSummary[]; sessions: SessionSummary[] }) {
+type WalkUpFormState = {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone: string;
+  company: string;
+  roleTitle: string;
+  ticketTypeId: string;
+  paymentMode: "cash" | "comp";
+};
+
+type CheckInScannerProps = {
+  events: EventSummary[];
+  sessions: SessionSummary[];
+  ticketTypes: TicketTypeSummary[];
+};
+
+const emptyWalkUpForm: WalkUpFormState = {
+  firstName: "",
+  lastName: "",
+  email: "",
+  phone: "",
+  company: "",
+  roleTitle: "",
+  ticketTypeId: "",
+  paymentMode: "cash",
+};
+
+export function CheckInScanner({ events, sessions, ticketTypes }: CheckInScannerProps) {
   const scannerId = useId().replaceAll(":", "");
   const [eventId, setEventId] = useState(events[0]?.id ?? "");
   const [sessionId, setSessionId] = useState("");
   const [ticketCode, setTicketCode] = useState("");
   const [cameraActive, setCameraActive] = useState(false);
-  const [result, setResult] = useState<CheckInResult | null>(null);
-  const [isPending, startTransition] = useTransition();
+  const [lookupQuery, setLookupQuery] = useState("");
+  const [lookupResults, setLookupResults] = useState<CheckInLookupResult[]>([]);
+  const [lookupMessage, setLookupMessage] = useState<string | null>(null);
+  const [result, setResult] = useState<CheckInResult | WalkUpCheckInResult | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [walkUp, setWalkUp] = useState<WalkUpFormState>(emptyWalkUpForm);
+  const [isCheckingIn, startCheckInTransition] = useTransition();
+  const [isSearching, startSearchTransition] = useTransition();
+  const [isAddingWalkUp, startWalkUpTransition] = useTransition();
 
-  const filteredSessions = sessions.filter((session) => session.event_id === eventId);
+  const filteredSessions = useMemo(
+    () => sessions.filter((session) => session.event_id === eventId),
+    [eventId, sessions],
+  );
+  const filteredTicketTypes = useMemo(
+    () => ticketTypes.filter((ticketType) => ticketType.event_id === eventId),
+    [eventId, ticketTypes],
+  );
+
+  useEffect(() => {
+    if (sessionId && !filteredSessions.some((session) => session.id === sessionId)) {
+      setSessionId("");
+    }
+  }, [filteredSessions, sessionId]);
+
+  useEffect(() => {
+    setWalkUp((current) => {
+      if (filteredTicketTypes.some((ticketType) => ticketType.id === current.ticketTypeId)) return current;
+      return {
+        ...current,
+        ticketTypeId: filteredTicketTypes[0]?.id ?? "",
+      };
+    });
+  }, [filteredTicketTypes]);
+
+  const submitTicket = useCallback(
+    (rawCode: string) => {
+      const code = rawCode.trim();
+      if (!code || !eventId) return;
+
+      startCheckInTransition(async () => {
+        setStatusMessage(null);
+        const response = await fetch("/api/check-in", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            eventId,
+            sessionId: sessionId || null,
+            ticketCode: code,
+          }),
+        });
+        const data = (await response.json()) as CheckInResult;
+        setResult(data);
+        if (!response.ok) {
+          setStatusMessage(resultMessage(data.result));
+        }
+      });
+    },
+    [eventId, sessionId],
+  );
 
   useEffect(() => {
     if (!cameraActive) return;
@@ -32,8 +125,10 @@ export function CheckInScanner({ events, sessions }: { events: EventSummary[]; s
         { fps: 10, qrbox: { width: 260, height: 260 } },
         (decodedText) => {
           if (!mounted) return;
-          setTicketCode(decodedText.split("/").pop() ?? decodedText);
+          const code = decodedText.split("/").pop()?.trim() || decodedText.trim();
+          setTicketCode(code);
           setCameraActive(false);
+          submitTicket(code);
         },
         () => undefined,
       )
@@ -43,98 +138,412 @@ export function CheckInScanner({ events, sessions }: { events: EventSummary[]; s
       mounted = false;
       scanner.stop().catch(() => undefined);
     };
-  }, [cameraActive, scannerId]);
+  }, [cameraActive, scannerId, submitTicket]);
 
-  function submit(code = ticketCode) {
-    startTransition(async () => {
-      const response = await fetch("/api/check-in", {
+  function handleTicketSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    submitTicket(ticketCode);
+  }
+
+  function runLookup(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const query = lookupQuery.trim();
+    if (query.length < 2) {
+      setLookupResults([]);
+      setLookupMessage("Enter at least 2 characters.");
+      return;
+    }
+
+    startSearchTransition(async () => {
+      setLookupMessage(null);
+      const response = await fetch("/api/check-in/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           eventId,
           sessionId: sessionId || null,
-          ticketCode: code.trim(),
+          query,
         }),
       });
-      const data = (await response.json()) as CheckInResult;
-      setResult(data);
+      const data = (await response.json()) as CheckInLookupResponse;
+      setLookupResults(data.results);
+      setLookupMessage(data.message ?? (data.results.length ? null : "No matching guests found."));
+      if (!response.ok && data.message) {
+        setStatusMessage(data.message);
+      }
     });
   }
 
+  function updateWalkUp<Value extends keyof WalkUpFormState>(field: Value, value: WalkUpFormState[Value]) {
+    setWalkUp((current) => ({
+      ...current,
+      [field]: value,
+    }));
+  }
+
+  function createWalkUp(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    startWalkUpTransition(async () => {
+      setStatusMessage(null);
+      const response = await fetch("/api/check-in/walk-up", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...walkUp,
+          eventId,
+          sessionId: sessionId || null,
+        }),
+      });
+      const data = (await response.json()) as WalkUpCheckInResult;
+      setResult(data);
+      setStatusMessage(data.message ?? (!response.ok ? resultMessage(data.result) : null));
+
+      if (response.ok) {
+        setWalkUp({
+          ...emptyWalkUpForm,
+          ticketTypeId: walkUp.ticketTypeId,
+          paymentMode: walkUp.paymentMode,
+        });
+      }
+    });
+  }
+
+  const canUseCheckIn = Boolean(eventId);
+  const canAddWalkUp = canUseCheckIn && Boolean(walkUp.ticketTypeId);
+
   return (
-    <div className="grid gap-4 lg:grid-cols-[1fr_0.8fr]">
+    <div className="space-y-4">
       <Card>
         <CardHeader>
-          <CardTitle>Scan Ticket</CardTitle>
+          <CardTitle>Check-in Context</CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
+        <CardContent>
           <div className="grid gap-3 md:grid-cols-2">
             <div className="space-y-2">
-              <Label>Event</Label>
+              <Label htmlFor="check-in-event">Event</Label>
               <SelectField
+                id="check-in-event"
                 value={eventId}
-                onChange={(event) => setEventId(event.target.value)}
+                onChange={(event) => {
+                  setEventId(event.target.value);
+                  setLookupResults([]);
+                  setLookupMessage(null);
+                }}
                 options={events.map((event) => ({ label: event.title, value: event.id }))}
               />
             </div>
             <div className="space-y-2">
-              <Label>Session</Label>
+              <Label htmlFor="check-in-session">Session</Label>
               <SelectField
+                id="check-in-session"
                 value={sessionId}
-                onChange={(event) => setSessionId(event.target.value)}
-                options={[{ label: "Event-level check-in", value: "" }, ...filteredSessions.map((session) => ({ label: session.title, value: session.id }))]}
+                onChange={(event) => {
+                  setSessionId(event.target.value);
+                  setLookupResults([]);
+                  setLookupMessage(null);
+                }}
+                options={[
+                  { label: "Event-level check-in", value: "" },
+                  ...filteredSessions.map((session) => ({ label: session.title, value: session.id })),
+                ]}
               />
             </div>
           </div>
-          <div className="flex min-h-80 items-center justify-center rounded-lg border border-white/10 bg-black">
-            {cameraActive ? (
-              <div id={scannerId} className="w-full max-w-md overflow-hidden rounded-lg" />
-            ) : (
-              <div className="text-center">
-                <Camera className="mx-auto h-10 w-10 text-[#e50913]" aria-hidden />
-                <p className="mt-3 text-sm text-[#999999]">Camera scan area</p>
-                <Button className="mt-4" onClick={() => setCameraActive(true)}>
-                  <Camera className="h-4 w-4" aria-hidden />
-                  Start Camera
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-4 xl:grid-cols-[1fr_0.8fr]">
+        <div className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Scan Ticket</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex min-h-72 items-center justify-center rounded-lg border border-white/10 bg-black">
+                {cameraActive ? (
+                  <div id={scannerId} className="w-full max-w-md overflow-hidden rounded-lg" />
+                ) : (
+                  <div className="text-center">
+                    <Camera className="mx-auto h-10 w-10 text-[#e50913]" aria-hidden />
+                    <Button className="mt-4" onClick={() => setCameraActive(true)} disabled={!canUseCheckIn || isCheckingIn}>
+                      <Camera className="h-4 w-4" aria-hidden />
+                      Start Camera
+                    </Button>
+                  </div>
+                )}
+              </div>
+
+              <form className="grid gap-3 md:grid-cols-[1fr_auto]" onSubmit={handleTicketSubmit}>
+                <div className="space-y-2">
+                  <Label htmlFor="ticket-code">Ticket code</Label>
+                  <Input
+                    id="ticket-code"
+                    value={ticketCode}
+                    onChange={(event) => setTicketCode(event.target.value)}
+                    placeholder="FCF-..."
+                    autoComplete="off"
+                  />
+                </div>
+                <Button className="self-end" type="submit" disabled={!ticketCode.trim() || !canUseCheckIn || isCheckingIn}>
+                  <Keyboard className="h-4 w-4" aria-hidden />
+                  Check In
                 </Button>
+              </form>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Find Guest</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <form className="grid gap-3 md:grid-cols-[1fr_auto]" onSubmit={runLookup}>
+                <div className="space-y-2">
+                  <Label htmlFor="guest-lookup">Guest lookup</Label>
+                  <Input
+                    id="guest-lookup"
+                    value={lookupQuery}
+                    onChange={(event) => setLookupQuery(event.target.value)}
+                    placeholder="Name, email, phone, or code"
+                    autoComplete="off"
+                  />
+                </div>
+                <Button className="self-end" type="submit" variant="secondary" disabled={!canUseCheckIn || isSearching}>
+                  <Search className="h-4 w-4" aria-hidden />
+                  Search
+                </Button>
+              </form>
+
+              {lookupMessage ? <p className="text-sm text-[#999999]">{lookupMessage}</p> : null}
+              {lookupResults.length ? (
+                <div className="space-y-2">
+                  {lookupResults.map((guest) => (
+                    <LookupRow
+                      key={guest.ticketId}
+                      guest={guest}
+                      onCheckIn={() => {
+                        setTicketCode(guest.ticketCode);
+                        submitTicket(guest.ticketCode);
+                      }}
+                      disabled={isCheckingIn}
+                    />
+                  ))}
+                </div>
+              ) : null}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Add Walk-up</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <form className="space-y-4" onSubmit={createWalkUp}>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <Field label="First name" htmlFor="walkup-first">
+                    <Input
+                      id="walkup-first"
+                      value={walkUp.firstName}
+                      onChange={(event) => updateWalkUp("firstName", event.target.value)}
+                      required
+                      autoComplete="given-name"
+                    />
+                  </Field>
+                  <Field label="Last name" htmlFor="walkup-last">
+                    <Input
+                      id="walkup-last"
+                      value={walkUp.lastName}
+                      onChange={(event) => updateWalkUp("lastName", event.target.value)}
+                      required
+                      autoComplete="family-name"
+                    />
+                  </Field>
+                  <Field label="Email" htmlFor="walkup-email">
+                    <Input
+                      id="walkup-email"
+                      type="email"
+                      value={walkUp.email}
+                      onChange={(event) => updateWalkUp("email", event.target.value)}
+                      autoComplete="email"
+                    />
+                  </Field>
+                  <Field label="Phone" htmlFor="walkup-phone">
+                    <PhoneInput
+                      id="walkup-phone"
+                      value={walkUp.phone}
+                      onChange={(event) => updateWalkUp("phone", event.target.value)}
+                    />
+                  </Field>
+                  <Field label="Ticket type" htmlFor="walkup-ticket-type">
+                    <SelectField
+                      id="walkup-ticket-type"
+                      value={walkUp.ticketTypeId}
+                      onChange={(event) => updateWalkUp("ticketTypeId", event.target.value)}
+                      options={filteredTicketTypes.map((ticketType) => ({ label: ticketType.name, value: ticketType.id }))}
+                    />
+                  </Field>
+                  <Field label="Payment" htmlFor="walkup-payment">
+                    <SelectField
+                      id="walkup-payment"
+                      value={walkUp.paymentMode}
+                      onChange={(event) => updateWalkUp("paymentMode", event.target.value as WalkUpFormState["paymentMode"])}
+                      options={[
+                        { label: "Cash at door", value: "cash" },
+                        { label: "Let in / comp", value: "comp" },
+                      ]}
+                    />
+                  </Field>
+                  <Field label="Company" htmlFor="walkup-company">
+                    <Input
+                      id="walkup-company"
+                      value={walkUp.company}
+                      onChange={(event) => updateWalkUp("company", event.target.value)}
+                    />
+                  </Field>
+                  <Field label="Role / title" htmlFor="walkup-role">
+                    <Input
+                      id="walkup-role"
+                      value={walkUp.roleTitle}
+                      onChange={(event) => updateWalkUp("roleTitle", event.target.value)}
+                    />
+                  </Field>
+                </div>
+                <Button type="submit" size="lg" className="w-full" disabled={!canAddWalkUp || isAddingWalkUp}>
+                  <UserPlus className="h-4 w-4" aria-hidden />
+                  Add and Check In
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+        </div>
+
+        <Card className="xl:sticky xl:top-4 xl:self-start">
+          <CardHeader>
+            <CardTitle>Result</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {result ? (
+              <div className="space-y-4">
+                <div className={`rounded-lg border p-4 ${resultTone(result.result)}`}>
+                  <div className="flex items-center gap-3">
+                    {isAcceptedResult(result.result) ? (
+                      <CheckCircle2 className="h-6 w-6" aria-hidden />
+                    ) : (
+                      <XCircle className="h-6 w-6" aria-hidden />
+                    )}
+                    <div>
+                      <p className="text-sm opacity-80">Status</p>
+                      <p className="text-2xl font-semibold capitalize text-white">{result.result.replaceAll("_", " ")}</p>
+                    </div>
+                  </div>
+                </div>
+                {statusMessage ? <p className="text-sm text-[#dddddd]">{statusMessage}</p> : null}
+                {result.attendeeName ? <p className="text-lg font-medium text-white">{result.attendeeName}</p> : null}
+                {result.ticketTypeName ? <p className="text-sm text-[#999999]">{result.ticketTypeName}</p> : null}
+                {"ticketCode" in result && result.ticketCode ? (
+                  <p className="font-mono text-sm text-white">{result.ticketCode}</p>
+                ) : null}
+                {result.checkedInAt ? <p className="text-sm text-[#999999]">Checked in at {formatDate(result.checkedInAt)}</p> : null}
+                {result.priorCheckedInAt ? (
+                  <p className="text-sm text-red-200">Already checked in at {formatDate(result.priorCheckedInAt)}</p>
+                ) : null}
+              </div>
+            ) : (
+              <div className="flex min-h-64 flex-col items-center justify-center text-center text-[#999999]">
+                <TicketCheck className="mb-3 h-8 w-8" aria-hidden />
+                Scan, enter, search, or add a guest to see check-in status.
               </div>
             )}
-          </div>
-          <div className="grid gap-3 md:grid-cols-[1fr_auto]">
-            <div className="space-y-2">
-              <Label htmlFor="ticket-code">Manual ticket code</Label>
-              <Input id="ticket-code" value={ticketCode} onChange={(event) => setTicketCode(event.target.value)} placeholder="FCF-..." />
-            </div>
-            <Button className="self-end" onClick={() => submit()} disabled={!ticketCode || isPending}>
-              <Keyboard className="h-4 w-4" aria-hidden />
-              Check In
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader>
-          <CardTitle>Result</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {result ? (
-            <div className="space-y-4">
-              <div className="rounded-lg border border-white/10 bg-[#0b0b0b] p-4">
-                <p className="text-sm text-[#999999]">Status</p>
-                <p className="mt-1 text-2xl font-semibold capitalize text-white">{result.result.replaceAll("_", " ")}</p>
-              </div>
-              {result.attendeeName ? <p className="text-lg font-medium">{result.attendeeName}</p> : null}
-              {result.ticketTypeName ? <p className="text-sm text-[#999999]">{result.ticketTypeName}</p> : null}
-              {result.priorCheckedInAt ? <p className="text-sm text-red-200">Already checked in at {new Date(result.priorCheckedInAt).toLocaleString()}</p> : null}
-            </div>
-          ) : (
-            <div className="flex min-h-64 flex-col items-center justify-center text-center text-[#999999]">
-              <Search className="mb-3 h-8 w-8" aria-hidden />
-              Scan, enter, or search for a guest to see check-in status.
-            </div>
-          )}
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
+}
+
+function LookupRow({
+  guest,
+  onCheckIn,
+  disabled,
+}: {
+  guest: CheckInLookupResult;
+  onCheckIn: () => void;
+  disabled: boolean;
+}) {
+  return (
+    <div className="grid gap-3 rounded-md border border-white/10 bg-[#0b0b0b] p-3 md:grid-cols-[1fr_auto] md:items-center">
+      <div className="min-w-0 space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <p className="font-medium text-white">{guest.attendeeName}</p>
+          <span className="rounded-sm border border-white/10 px-2 py-0.5 text-xs uppercase text-[#999999]">
+            {guest.ticketStatus}
+          </span>
+          {guest.checkedInAt ? (
+            <span className="rounded-sm border border-emerald-400/30 px-2 py-0.5 text-xs uppercase text-emerald-200">
+              In
+            </span>
+          ) : null}
+        </div>
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-[#999999]">
+          {guest.attendeeEmail ? (
+            <span className="inline-flex items-center gap-1">
+              <Mail className="h-3.5 w-3.5" aria-hidden />
+              {guest.attendeeEmail}
+            </span>
+          ) : null}
+          {guest.attendeePhone ? (
+            <span className="inline-flex items-center gap-1">
+              <Phone className="h-3.5 w-3.5" aria-hidden />
+              {guest.attendeePhone}
+            </span>
+          ) : null}
+        </div>
+        <p className="text-sm text-[#bbbbbb]">
+          {guest.ticketTypeName ?? "Ticket"} <span className="font-mono text-[#999999]">{guest.ticketCode}</span>
+        </p>
+      </div>
+      <Button type="button" onClick={onCheckIn} disabled={disabled} variant={guest.checkedInAt ? "outline" : "default"}>
+        <TicketCheck className="h-4 w-4" aria-hidden />
+        {guest.checkedInAt ? "Review" : "Check In"}
+      </Button>
+    </div>
+  );
+}
+
+function Field({ label, htmlFor, children }: { label: string; htmlFor: string; children: ReactNode }) {
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={htmlFor}>{label}</Label>
+      {children}
+    </div>
+  );
+}
+
+function isAcceptedResult(result: CheckInResult["result"]) {
+  return result === "success" || result === "duplicate";
+}
+
+function resultTone(result: CheckInResult["result"]) {
+  if (result === "success") return "border-emerald-400/30 bg-emerald-950/40 text-emerald-100";
+  if (result === "duplicate") return "border-amber-300/30 bg-amber-950/40 text-amber-100";
+  return "border-red-400/30 bg-red-950/40 text-red-100";
+}
+
+function resultMessage(result: CheckInResult["result"]) {
+  const messages: Record<CheckInResult["result"], string> = {
+    success: "Guest checked in.",
+    duplicate: "This guest has already been checked in.",
+    invalid: "Ticket was not found.",
+    wrong_event: "This ticket belongs to another event.",
+    revoked: "This ticket has been revoked.",
+    cancelled: "This ticket has been cancelled.",
+    not_authorized: "You are not authorized to check in this event.",
+  };
+
+  return messages[result];
+}
+
+function formatDate(value: string) {
+  return new Date(value).toLocaleString();
 }

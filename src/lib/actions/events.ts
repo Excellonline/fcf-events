@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { isServiceRoleConfigured } from "@/lib/env";
 import { demoOrganizationId } from "@/lib/demo-data";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { eventSchema } from "@/lib/validation";
+import { eventSchema, zeffyEventSettingsSchema } from "@/lib/validation";
 import { writeAuditLog } from "@/lib/audit";
 
 export async function createEventAction(input: FormData) {
@@ -21,6 +21,8 @@ export async function createEventAction(input: FormData) {
     status: input.get("status"),
     visibility: input.get("visibility"),
     minimumAge: input.get("minimumAge"),
+    zeffyCampaignId: input.get("zeffyCampaignId"),
+    zeffyFormUrl: input.get("zeffyFormUrl"),
   });
 
   if (!parsed.success) {
@@ -49,6 +51,8 @@ export async function createEventAction(input: FormData) {
       status: values.status,
       visibility: values.visibility,
       minimum_age: values.minimumAge,
+      zeffy_campaign_id: values.zeffyCampaignId || null,
+      zeffy_form_url: values.zeffyFormUrl || null,
     })
     .select("id")
     .single();
@@ -64,4 +68,53 @@ export async function createEventAction(input: FormData) {
 
   revalidatePath("/dashboard/events");
   return { ok: true, message: "Event created." };
+}
+
+export async function updateEventZeffySettingsAction(input: FormData) {
+  const parsed = zeffyEventSettingsSchema.safeParse({
+    eventId: input.get("eventId"),
+    zeffyCampaignId: input.get("zeffyCampaignId"),
+    zeffyFormUrl: input.get("zeffyFormUrl"),
+  });
+
+  if (!parsed.success) {
+    return { ok: false, message: parsed.error.issues[0]?.message ?? "Invalid Zeffy settings." };
+  }
+
+  if (!isServiceRoleConfigured()) {
+    return { ok: true, message: "Zeffy settings validated. Connect Supabase to persist them." };
+  }
+
+  const values = parsed.data;
+  const supabase = createSupabaseAdminClient();
+  const { data: event, error: eventError } = await supabase
+    .from("events")
+    .select("id, organization_id, slug")
+    .eq("id", values.eventId)
+    .maybeSingle();
+
+  if (eventError || !event) return { ok: false, message: "Event not found." };
+
+  const { error } = await supabase
+    .from("events")
+    .update({
+      zeffy_campaign_id: values.zeffyCampaignId || null,
+      zeffy_form_url: values.zeffyFormUrl || null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", values.eventId);
+
+  if (error) return { ok: false, message: error.message };
+
+  await writeAuditLog({
+    organizationId: event.organization_id,
+    action: "event.zeffy_settings.updated",
+    entityType: "event",
+    entityId: event.id,
+  });
+
+  revalidatePath("/dashboard/events");
+  revalidatePath(`/dashboard/events/${event.slug}`);
+  revalidatePath(`/e/${event.slug}`);
+  return { ok: true, message: "Zeffy settings updated." };
 }

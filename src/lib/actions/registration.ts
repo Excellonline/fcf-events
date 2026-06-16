@@ -4,10 +4,13 @@ import { differenceInYears } from "date-fns";
 import { isServiceRoleConfigured } from "@/lib/env";
 import { demoEvents, demoOrganizationId } from "@/lib/demo-data";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { logEmailSend } from "@/lib/email/logging";
+import { sendRegistrationConfirmationEmail } from "@/lib/email/registration-confirmation";
 import { createTicketCode, hashTicketToken } from "@/lib/security/qr";
 import { registrationSchema } from "@/lib/validation";
 import type { RegistrationResult } from "@/lib/types";
 import { writeAuditLog } from "@/lib/audit";
+import { buildZeffyPaymentUrl } from "@/lib/zeffy";
 
 export async function registerForEvent(input: unknown): Promise<RegistrationResult> {
   const parsed = registrationSchema.safeParse(input);
@@ -59,6 +62,11 @@ export async function registerForEvent(input: unknown): Promise<RegistrationResu
 
   if (!ticketType) return { ok: false, message: "Ticket type is not available." };
 
+  const amountDue = Number(ticketType.price ?? 0);
+  if (amountDue > 0 && !event.zeffy_form_url) {
+    return { ok: false, message: "Payment is not configured for this event yet." };
+  }
+
   const normalizedEmail = values.email.toLowerCase().trim();
   const { data: existingAttendee } = await supabase
     .from("attendees")
@@ -87,7 +95,7 @@ export async function registerForEvent(input: unknown): Promise<RegistrationResu
 
   if (attendeeError || !attendee) return { ok: false, message: "Could not save attendee." };
 
-  const amountDue = Number(ticketType.price ?? 0);
+  const requiresPayment = amountDue > 0;
   const { data: registration, error: registrationError } = await supabase
     .from("registrations")
     .insert({
@@ -95,9 +103,9 @@ export async function registerForEvent(input: unknown): Promise<RegistrationResu
       event_id: values.eventId,
       attendee_id: attendee.id,
       ticket_type_id: values.ticketTypeId,
-      status: "confirmed",
+      status: requiresPayment ? "pending" : "confirmed",
       payment_status: amountDue === 0 ? "not_required" : "pending",
-      payment_method: amountDue === 0 ? "free" : "manual",
+      payment_method: amountDue === 0 ? "free" : "future_provider",
       amount_due: amountDue,
       amount_paid: 0,
       sms_consent: values.smsConsent,
@@ -108,6 +116,14 @@ export async function registerForEvent(input: unknown): Promise<RegistrationResu
         company: values.company,
         roleTitle: values.roleTitle,
         discountCode: values.discountCode,
+        ...(requiresPayment
+          ? {
+              zeffy: {
+                campaignId: event.zeffy_campaign_id,
+                formUrl: event.zeffy_form_url,
+              },
+            }
+          : {}),
       },
     })
     .select("*")
@@ -121,9 +137,31 @@ export async function registerForEvent(input: unknown): Promise<RegistrationResu
         organization_id: event.organization_id,
         registration_id: registration.id,
         session_id: sessionId,
-        status: "confirmed",
+        status: requiresPayment ? "pending" : "confirmed",
       })),
     );
+  }
+
+  if (requiresPayment) {
+    await writeAuditLog({
+      organizationId: event.organization_id,
+      action: "registration.payment_pending",
+      entityType: "registration",
+      entityId: registration.id,
+      metadata: { eventId: values.eventId, attendeeId: attendee.id, provider: "zeffy" },
+    });
+
+    return {
+      ok: true,
+      requiresPayment: true,
+      registrationId: registration.id,
+      paymentUrl: buildZeffyPaymentUrl({
+        formUrl: event.zeffy_form_url,
+        registrationId: registration.id,
+        eventSlug: event.slug,
+      }),
+      message: "Continue to Zeffy to complete payment.",
+    };
   }
 
   const ticketCode = createTicketCode();
@@ -152,6 +190,52 @@ export async function registerForEvent(input: unknown): Promise<RegistrationResu
     });
   }
 
+  let message = "Registration confirmed.";
+  if (values.emailConsent) {
+    try {
+      const email = await sendRegistrationConfirmationEmail({
+        attendeeName: `${values.firstName} ${values.lastName}`.trim(),
+        eventTitle: event.title,
+        eventStartsAt: event.starts_at,
+        eventTimezone: event.timezone,
+        venueName: event.venue_name,
+        address: event.address,
+        ticketCode,
+        ticketTypeName: ticketType.name,
+        ticketPrice: Number(ticketType.price ?? 0),
+        ticketCurrency: ticketType.currency ?? "CAD",
+        toEmail: values.email,
+        organizationId: event.organization_id,
+        eventId: values.eventId,
+        registrationId: registration.id,
+      });
+      await logEmailSend({
+        supabase,
+        organizationId: event.organization_id,
+        registrationId: registration.id,
+        attendeeId: attendee.id,
+        toEmail: values.email,
+        subject: email.subject,
+        body: email.text,
+        status: "sent",
+        providerStatus: email.providerId ?? "sent",
+      });
+    } catch (error) {
+      message = "Registration confirmed. Save or print this ticket because the confirmation email could not be sent.";
+      await logEmailSend({
+        supabase,
+        organizationId: event.organization_id,
+        registrationId: registration.id,
+        attendeeId: attendee.id,
+        toEmail: values.email,
+        subject: `Your FCF ticket for ${event.title}`,
+        body: `Registration confirmed for ticket ${ticketCode}.`,
+        status: "failed",
+        providerStatus: error instanceof Error ? error.message : "Unknown email error",
+      });
+    }
+  }
+
   await writeAuditLog({
     organizationId: event.organization_id,
     action: "registration.created",
@@ -160,7 +244,7 @@ export async function registerForEvent(input: unknown): Promise<RegistrationResu
     metadata: { eventId: values.eventId, attendeeId: attendee.id },
   });
 
-  return { ok: true, ticketCode, message: "Registration confirmed." };
+  return { ok: true, ticketCode, message };
 }
 
 export async function demoTicketOrganizationId() {

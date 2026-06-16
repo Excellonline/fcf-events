@@ -147,6 +147,8 @@ create table public.events (
   compliance_notes text,
   minimum_age integer not null default 19,
   organizer_contact text,
+  zeffy_campaign_id text,
+  zeffy_form_url text,
   prevent_overlapping_session_registrations boolean not null default false,
   created_by uuid references auth.users(id) on delete set null,
   created_at timestamptz not null default now(),
@@ -313,6 +315,10 @@ create table public.registrations (
   amount_due numeric(12,2) not null default 0,
   amount_paid numeric(12,2) not null default 0,
   payment_reference text,
+  external_payment_provider text,
+  external_payment_id text,
+  external_payment_payload jsonb not null default '{}'::jsonb,
+  external_payment_completed_at timestamptz,
   refund_status refund_status not null default 'none',
   custom_responses jsonb not null default '{}'::jsonb,
   sms_consent boolean not null default false,
@@ -879,8 +885,10 @@ begin
 end $$;
 
 create index events_org_status_start_idx on public.events (organization_id, status, starts_at);
+create index events_zeffy_campaign_idx on public.events (zeffy_campaign_id) where zeffy_campaign_id is not null;
 create index sessions_event_start_idx on public.sessions (event_id, starts_at);
 create index registrations_event_status_idx on public.registrations (event_id, status);
+create index registrations_external_payment_idx on public.registrations (external_payment_provider, external_payment_id) where external_payment_id is not null;
 create index tickets_event_code_idx on public.tickets (event_id, ticket_code);
 create index message_sends_status_idx on public.message_sends (organization_id, status, created_at desc);
 create index audit_logs_org_created_idx on public.audit_logs (organization_id, created_at desc);

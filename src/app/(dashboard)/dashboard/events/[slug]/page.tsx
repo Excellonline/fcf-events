@@ -1,11 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, Users } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { getEventBySlug, getSessions, getTicketTypes } from "@/lib/data";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { updateEventZeffySettingsAction } from "@/lib/actions/events";
+import { getEventAttendees, getEventBySlug, getSessions, getTicketTypes } from "@/lib/data";
 import { currency, eventLocationLabel, googleMapsSearchUrl } from "@/lib/utils";
 
 export default async function EventDetailPage({ params }: { params: Promise<{ slug: string }> }) {
@@ -13,9 +16,18 @@ export default async function EventDetailPage({ params }: { params: Promise<{ sl
   const event = await getEventBySlug(slug);
   if (!event) notFound();
 
-  const [sessions, ticketTypes] = await Promise.all([getSessions(event.id), getTicketTypes(event.id)]);
+  const [sessions, ticketTypes, attendees] = await Promise.all([
+    getSessions(event.id),
+    getTicketTypes(event.id),
+    getEventAttendees(event.id),
+  ]);
   const locationLabel = eventLocationLabel(event.venue_name, event.address);
   const mapsHref = event.address?.trim() ? googleMapsSearchUrl(locationLabel) : null;
+
+  async function updateZeffySettings(formData: FormData) {
+    "use server";
+    await updateEventZeffySettingsAction(formData);
+  }
 
   return (
     <>
@@ -24,12 +36,20 @@ export default async function EventDetailPage({ params }: { params: Promise<{ sl
         title={event.title}
         description={event.description}
         action={
-          <Button asChild variant="outline">
-            <Link href={`/e/${event.slug}`}>
-              <ExternalLink className="h-4 w-4" aria-hidden />
-              Public Page
-            </Link>
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button asChild variant="secondary">
+              <Link href={`/dashboard/events/${event.slug}#attendees`}>
+                <Users className="h-4 w-4" aria-hidden />
+                Attendees
+              </Link>
+            </Button>
+            <Button asChild variant="outline">
+              <Link href={`/e/${event.slug}`}>
+                <ExternalLink className="h-4 w-4" aria-hidden />
+                Public Page
+              </Link>
+            </Button>
+          </div>
         }
       />
       <div className="grid gap-4 lg:grid-cols-[1fr_0.8fr]">
@@ -63,6 +83,25 @@ export default async function EventDetailPage({ params }: { params: Promise<{ sl
             <Info label="Capacity" value={event.capacity ?? "Unlimited"} />
             <Info label="Minimum age" value={`${event.minimum_age}+`} />
             <Info label="Compliance" value={event.compliance_notes ?? "No notes"} />
+            <Info label="Zeffy campaign" value={event.zeffy_campaign_id ?? "Not configured"} />
+            <Info
+              label="Zeffy form"
+              value={
+                event.zeffy_form_url ? (
+                  <a
+                    href={event.zeffy_form_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-white underline-offset-4 transition hover:text-[#ff6b6f] hover:underline"
+                  >
+                    Open form
+                    <ExternalLink className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                  </a>
+                ) : (
+                  "Not configured"
+                )
+              }
+            />
           </CardContent>
         </Card>
         <Card>
@@ -82,6 +121,90 @@ export default async function EventDetailPage({ params }: { params: Promise<{ sl
           </CardContent>
         </Card>
       </div>
+      <Card id="attendees" className="mt-4 scroll-mt-6">
+        <CardHeader>
+          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+            <CardTitle>Attendees</CardTitle>
+            <Badge variant="muted">{attendees.length} registered</Badge>
+          </div>
+        </CardHeader>
+        <CardContent className="overflow-x-auto">
+          {attendees.length ? (
+            <table className="w-full min-w-[920px] text-left text-sm">
+              <thead className="text-[#999999]">
+                <tr className="border-b border-white/10">
+                  <th className="py-3 pr-4 font-medium">Name</th>
+                  <th className="py-3 pr-4 font-medium">Company</th>
+                  <th className="py-3 pr-4 font-medium">Contact</th>
+                  <th className="py-3 pr-4 font-medium">Ticket</th>
+                  <th className="py-3 pr-4 font-medium">Registration</th>
+                  <th className="py-3 pr-4 font-medium">Payment</th>
+                  <th className="py-3 font-medium">Check-in</th>
+                </tr>
+              </thead>
+              <tbody>
+                {attendees.map((attendee) => (
+                  <tr key={attendee.registration_id} className="border-b border-white/5">
+                    <td className="py-4 pr-4 text-white">
+                      <p className="font-medium">{attendee.full_name}</p>
+                      <p className="text-[#999999]">{attendee.role_title ?? "No role listed"}</p>
+                    </td>
+                    <td className="py-4 pr-4 text-[#dddddd]">{attendee.company ?? "No company"}</td>
+                    <td className="py-4 pr-4 text-[#999999]">
+                      <p>{attendee.email ?? "No email"}</p>
+                      <p>{attendee.phone ?? "No phone"}</p>
+                    </td>
+                    <td className="py-4 pr-4 text-[#dddddd]">
+                      <p>{attendee.ticket_type_name ?? "No ticket type"}</p>
+                      <p className="text-[#999999]">{attendee.ticket_code ?? "No ticket issued"}</p>
+                    </td>
+                    <td className="py-4 pr-4">
+                      <div className="space-y-2">
+                        <StatusBadge status={attendee.registration_status} />
+                        <p className="text-[#999999]">{formatDateTime(attendee.registered_at)}</p>
+                      </div>
+                    </td>
+                    <td className="py-4 pr-4">
+                      <PaymentBadge status={attendee.payment_status} />
+                    </td>
+                    <td className="py-4">
+                      {attendee.checked_in_at ? (
+                        <div className="space-y-2">
+                          <Badge variant="success">Checked in</Badge>
+                          <p className="text-[#999999]">{formatDateTime(attendee.checked_in_at)}</p>
+                        </div>
+                      ) : (
+                        <Badge variant="muted">Not checked in</Badge>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <div className="rounded-md border border-white/10 px-4 py-8 text-sm text-[#999999]">
+              No attendees have registered for this event yet.
+            </div>
+          )}
+        </CardContent>
+      </Card>
+      <Card className="mt-4">
+        <CardHeader>
+          <CardTitle>Zeffy Payment Settings</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form action={updateZeffySettings} className="grid gap-4 md:grid-cols-[1fr_1fr_auto] md:items-end">
+            <input type="hidden" name="eventId" value={event.id} />
+            <Field label="Campaign ID">
+              <Input name="zeffyCampaignId" defaultValue={event.zeffy_campaign_id ?? ""} placeholder="Zeffy campaign UUID" />
+            </Field>
+            <Field label="Form URL">
+              <Input name="zeffyFormUrl" type="url" defaultValue={event.zeffy_form_url ?? ""} placeholder="https://www.zeffy.com/..." />
+            </Field>
+            <Button type="submit">Save Zeffy</Button>
+          </form>
+        </CardContent>
+      </Card>
       <Card className="mt-4">
         <CardHeader>
           <CardTitle>Agenda</CardTitle>
@@ -99,6 +222,15 @@ export default async function EventDetailPage({ params }: { params: Promise<{ sl
   );
 }
 
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-2">
+      <Label>{label}</Label>
+      {children}
+    </div>
+  );
+}
+
 function Info({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div>
@@ -106,4 +238,26 @@ function Info({ label, value }: { label: string; value: React.ReactNode }) {
       <div className="mt-1 text-sm text-white">{value}</div>
     </div>
   );
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const variant = status === "confirmed" ? "success" : status === "cancelled" ? "danger" : "muted";
+  return <Badge variant={variant}>{labelize(status)}</Badge>;
+}
+
+function PaymentBadge({ status }: { status: string }) {
+  const variant = ["paid", "comped", "not_required"].includes(status)
+    ? "success"
+    : ["failed", "refunded"].includes(status)
+      ? "danger"
+      : "muted";
+  return <Badge variant={variant}>{labelize(status)}</Badge>;
+}
+
+function labelize(value: string) {
+  return value.replace(/_/g, " ");
+}
+
+function formatDateTime(value: string | null) {
+  return value ? new Date(value).toLocaleString() : "Not recorded";
 }

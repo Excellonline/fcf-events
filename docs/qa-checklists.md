@@ -3,8 +3,11 @@
 ## Manual MVP Flow
 - Create an organizer account and assign Owner role.
 - Create a published event with capacity, age minimum, ticket types, and two sessions.
-- Register a guest from `/e/fcf-business-conference`.
+- For a free ticket, register a guest from `/e/fcf-business-conference`.
 - Confirm a ticket code and QR render on the confirmation page.
+- For a paid ticket, confirm registration redirects to Zeffy instead of issuing a QR ticket immediately.
+- Complete a Zeffy test payment and verify the webhook marks the registration paid and issues one active ticket.
+- Run the Zeffy sync endpoint after the same payment and verify it does not issue a duplicate ticket.
 - Check in the ticket from `/check-in`.
 - Scan the same QR again and verify duplicate warning.
 - Register the same attendee for another event and verify repeat attendee analytics.

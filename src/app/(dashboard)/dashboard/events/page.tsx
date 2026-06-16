@@ -67,6 +67,10 @@ export default async function EventsPage() {
               <Field label="Address"><Input name="address" /></Field>
               <Field label="Description"><Textarea name="description" /></Field>
               <div className="grid gap-4 md:grid-cols-2">
+                <Field label="Zeffy campaign ID"><Input name="zeffyCampaignId" placeholder="Optional after Zeffy form is created" /></Field>
+                <Field label="Zeffy form URL"><Input name="zeffyFormUrl" type="url" placeholder="https://www.zeffy.com/..." /></Field>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
                 <Field label="Status">
                   <SelectField name="status" options={[
                     { label: "Draft", value: "draft" },

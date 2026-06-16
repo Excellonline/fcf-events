@@ -7,8 +7,7 @@ export function PrintTicketButton() {
   return (
     <Button type="button" onClick={() => window.print()}>
       <Printer className="h-4 w-4" aria-hidden />
-      Print / Save PDF
+      Print This Page
     </Button>
   );
 }
-

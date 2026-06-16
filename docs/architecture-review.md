@@ -8,20 +8,20 @@ FCF Events is a private Eventbrite-style MVP for Canadian cannabis industry even
 - Supabase provides Auth, PostgreSQL, Storage, RLS, and optional Edge Functions for scheduled SMS and sync workers.
 - PostgreSQL owns integrity-sensitive workflows: duplicate check-in prevention, unique ticket codes, idempotent reminders, consent records, and audit logs.
 - Twilio SMS is implemented through a server-only REST adapter because `@twilio/rest` is not published on npm. No Twilio secrets are exposed to client code.
-- Email is adapter-only until a provider is approved. Ticket pages are print-optimized instead of server-generated PDFs.
+- Resend sends consented event confirmation emails with inline QR tickets. Supabase Auth owns account email once custom SMTP is configured. Ticket pages are print-optimized instead of server-generated PDFs.
 
 ## Key Assumptions
 - Deployment target is Vercel plus Supabase Cloud.
 - One seeded FCF organization is enough for the first MVP, but the schema remains multi-organization ready.
 - Age-gating defaults to 19 and remains configurable per event.
-- Payment processing is manual/offline/future-provider only.
+- Payment processing uses manually created Zeffy-hosted ticketing forms. FCF Events stores the linked Zeffy campaign/form, redirects paid registrations to Zeffy, and issues QR tickets only after Zeffy payment webhook or sync reconciliation.
 - SMS reminders are transactional event communications and still record CASL-style proof of consent, source, timestamp, purpose, message body snapshot, and opt-out handling.
 
 ## Fixed Stack Gaps
 - `@twilio/rest` does not exist in npm; the app uses direct Twilio REST calls via server-side `fetch` and documents the gap.
-- No email provider is approved, so production email sending is blocked with `TODO_EXTERNAL_PROVIDER_REQUIRED`.
+- Event confirmation email uses Resend. Supabase Auth email requires production SMTP setup in Supabase.
 - No PDF library is approved, so downloadable tickets use browser print/save.
-- No payment provider is approved, so card payments are not implemented.
+- Zeffy is approved as the hosted payment flow. The app does not create Zeffy forms through the API because Zeffy's public API is read-only.
 
 ## Security And Compliance Risks
 - RLS must be tested with every role before launch.
