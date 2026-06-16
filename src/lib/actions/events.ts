@@ -14,6 +14,7 @@ import {
 } from "@/lib/validation";
 import { writeAuditLog } from "@/lib/audit";
 import type { Role } from "@/lib/types";
+import { fetchZeffyTicketOffers, type ZeffyTicketOffer } from "@/lib/zeffy";
 
 const EVENT_MANAGEMENT_ROLES: Role[] = ["owner", "admin", "manager"];
 
@@ -98,12 +99,21 @@ export async function createEventAction(input: FormData) {
     }
   }
 
+  const syncResult = values.zeffyFormUrl
+    ? await syncZeffyTicketTypes({
+        supabase,
+        eventId: data.id,
+        organizationId: demoOrganizationId,
+        formUrl: values.zeffyFormUrl,
+      })
+    : null;
+
   await writeAuditLog({
     organizationId: demoOrganizationId,
     action: "event.created",
     entityType: "event",
     entityId: data.id,
-    metadata: { ticketTypeCount: ticketTypeValues.length },
+    metadata: { ticketTypeCount: ticketTypeValues.length + (syncResult?.synced ?? 0) },
   });
 
   revalidatePath("/");
@@ -114,7 +124,10 @@ export async function createEventAction(input: FormData) {
   revalidatePath(`/e/${values.slug}`);
   return {
     ok: true,
-    message: ticketTypeValues.length ? "Event and ticket types created." : "Event created.",
+    message: withZeffySyncMessage(
+      ticketTypeValues.length ? "Event and ticket types created." : "Event created.",
+      syncResult,
+    ),
     persisted: true,
     slug: values.slug,
   };
@@ -182,11 +195,21 @@ export async function updateEventAction(input: FormData) {
 
   if (error) return { ok: false, message: error.message };
 
+  const syncResult = values.zeffyFormUrl
+    ? await syncZeffyTicketTypes({
+        supabase,
+        eventId: existingEvent.id,
+        organizationId: existingEvent.organization_id,
+        formUrl: values.zeffyFormUrl,
+      })
+    : null;
+
   await writeAuditLog({
     organizationId: existingEvent.organization_id,
     action: "event.updated",
     entityType: "event",
     entityId: existingEvent.id,
+    metadata: syncResult ? { zeffyTicketTypesSynced: syncResult.synced } : undefined,
   });
 
   revalidatePath("/dashboard");
@@ -199,7 +222,12 @@ export async function updateEventAction(input: FormData) {
   revalidatePath(`/e/${existingEvent.slug}`);
   revalidatePath(`/e/${values.slug}`);
 
-  return { ok: true, message: "Event updated.", persisted: true, slug: values.slug };
+  return {
+    ok: true,
+    message: withZeffySyncMessage("Event updated.", syncResult),
+    persisted: true,
+    slug: values.slug,
+  };
 }
 
 export async function updateEventZeffySettingsAction(input: FormData) {
@@ -238,17 +266,27 @@ export async function updateEventZeffySettingsAction(input: FormData) {
 
   if (error) return { ok: false, message: error.message };
 
+  const syncResult = values.zeffyFormUrl
+    ? await syncZeffyTicketTypes({
+        supabase,
+        eventId: event.id,
+        organizationId: event.organization_id,
+        formUrl: values.zeffyFormUrl,
+      })
+    : null;
+
   await writeAuditLog({
     organizationId: event.organization_id,
     action: "event.zeffy_settings.updated",
     entityType: "event",
     entityId: event.id,
+    metadata: syncResult ? { zeffyTicketTypesSynced: syncResult.synced } : undefined,
   });
 
   revalidatePath("/dashboard/events");
   revalidatePath(`/dashboard/events/${event.slug}`);
   revalidatePath(`/e/${event.slug}`);
-  return { ok: true, message: "Zeffy settings updated." };
+  return { ok: true, message: withZeffySyncMessage("Zeffy settings updated.", syncResult) };
 }
 
 export async function createTicketTypeAction(input: FormData): Promise<ActionResult> {
@@ -382,6 +420,108 @@ function toTicketTypePayload(values: TicketTypePayloadValues) {
     visibility: values.visibility,
     payment_method: values.price === 0 ? "free" : "manual",
   };
+}
+
+type ZeffyTicketSyncResult = {
+  synced: number;
+  inserted: number;
+  updated: number;
+  error?: string;
+};
+
+async function syncZeffyTicketTypes({
+  supabase,
+  eventId,
+  organizationId,
+  formUrl,
+}: {
+  supabase: ReturnType<typeof createSupabaseAdminClient>;
+  eventId: string;
+  organizationId: string;
+  formUrl: string;
+}): Promise<ZeffyTicketSyncResult> {
+  try {
+    const offers = await fetchZeffyTicketOffers(formUrl);
+    if (!offers.length) {
+      return { synced: 0, inserted: 0, updated: 0, error: "No Zeffy ticket prices were found on the form." };
+    }
+
+    const { data: existingTicketTypes, error } = await supabase
+      .from("ticket_types")
+      .select("id, name")
+      .eq("event_id", eventId)
+      .eq("organization_id", organizationId);
+
+    if (error) return { synced: 0, inserted: 0, updated: 0, error: error.message };
+
+    const existingByName = new Map(
+      (existingTicketTypes ?? []).map((ticketType) => [normalizeTicketName(ticketType.name as string), ticketType.id as string]),
+    );
+    let inserted = 0;
+    let updated = 0;
+
+    for (const offer of offers) {
+      const existingId = existingByName.get(normalizeTicketName(offer.name));
+      const payload = toZeffyTicketTypePayload(offer);
+
+      if (existingId) {
+        const { error: updateError } = await supabase
+          .from("ticket_types")
+          .update({
+            ...payload,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", existingId)
+          .eq("event_id", eventId)
+          .eq("organization_id", organizationId);
+
+        if (updateError) return { synced: inserted + updated, inserted, updated, error: updateError.message };
+        updated += 1;
+        continue;
+      }
+
+      const { error: insertError } = await supabase.from("ticket_types").insert({
+        organization_id: organizationId,
+        event_id: eventId,
+        ...payload,
+      });
+
+      if (insertError) return { synced: inserted + updated, inserted, updated, error: insertError.message };
+      inserted += 1;
+    }
+
+    return { synced: inserted + updated, inserted, updated };
+  } catch (error) {
+    return {
+      synced: 0,
+      inserted: 0,
+      updated: 0,
+      error: error instanceof Error ? error.message : "Could not sync Zeffy ticket prices.",
+    };
+  }
+}
+
+function toZeffyTicketTypePayload(offer: ZeffyTicketOffer) {
+  return {
+    name: offer.name,
+    description: offer.description.slice(0, 1000),
+    price: offer.price,
+    currency: offer.currency,
+    capacity_limit: null,
+    visibility: "public" as const,
+    payment_method: offer.price === 0 ? "free" : "future_provider",
+  };
+}
+
+function normalizeTicketName(value: string) {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function withZeffySyncMessage(message: string, syncResult: ZeffyTicketSyncResult | null) {
+  if (!syncResult) return message;
+  if (syncResult.error) return `${message} Zeffy ticket sync warning: ${syncResult.error}`;
+  if (!syncResult.synced) return `${message} No Zeffy ticket prices were found.`;
+  return `${message} Synced ${syncResult.synced} Zeffy ticket type${syncResult.synced === 1 ? "" : "s"}.`;
 }
 
 function readTicketTypeDraftForms(input: FormData) {

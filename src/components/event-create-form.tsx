@@ -134,13 +134,13 @@ export function EventCreateForm() {
                 </div>
                 <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
                   <Field label="Name">
-                    <Input name="ticketName" placeholder="General Admission" required />
+                    <Input name="ticketName" placeholder="General Admission" />
                   </Field>
                   <Field label="Price">
-                    <Input name="ticketPrice" type="number" min={0} step="0.01" placeholder="0" required />
+                    <Input name="ticketPrice" type="number" min={0} step="0.01" placeholder="0" />
                   </Field>
                   <Field label="Currency">
-                    <Input name="ticketCurrency" defaultValue="CAD" maxLength={3} required />
+                    <Input name="ticketCurrency" defaultValue="CAD" maxLength={3} />
                   </Field>
                   <Field label="Capacity">
                     <Input name="ticketCapacityLimit" type="number" min={1} />

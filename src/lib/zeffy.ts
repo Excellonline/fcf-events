@@ -49,6 +49,13 @@ export type ZeffyPaymentCompletedEvent = {
   data: ZeffyPayment;
 };
 
+export type ZeffyTicketOffer = {
+  name: string;
+  description: string;
+  price: number;
+  currency: string;
+};
+
 type ZeffyList<T> = {
   object: "list";
   data: T[];
@@ -98,10 +105,126 @@ export async function listZeffyPayments(params: Record<string, string | number |
   return (await response.json()) as ZeffyList<ZeffyPayment>;
 }
 
+export async function fetchZeffyTicketOffers(formUrl: string): Promise<ZeffyTicketOffer[]> {
+  const response = await fetch(formUrl, {
+    headers: {
+      Accept: "text/html,application/xhtml+xml",
+      "User-Agent": "FCF Events Zeffy Sync",
+    },
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throw new Error(`Zeffy form request failed with ${response.status}.`);
+  }
+
+  const html = await response.text();
+  return extractTicketOffersFromHtml(html);
+}
+
 export function zeffyAmountToMajorUnits(amountInCents: number) {
   return Math.round(amountInCents) / 100;
 }
 
 export function getZeffyBuyerEmail(payment: ZeffyPayment) {
   return payment.buyer?.email?.trim().toLowerCase() || null;
+}
+
+function extractTicketOffersFromHtml(html: string): ZeffyTicketOffer[] {
+  const scripts = html.matchAll(/<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi);
+  const offers: ZeffyTicketOffer[] = [];
+
+  for (const match of scripts) {
+    const json = match[1]?.trim();
+    if (!json) continue;
+
+    try {
+      collectTicketOffers(JSON.parse(json), offers);
+    } catch {
+      continue;
+    }
+  }
+
+  return dedupeTicketOffers(offers);
+}
+
+function collectTicketOffers(value: unknown, offers: ZeffyTicketOffer[]) {
+  if (Array.isArray(value)) {
+    for (const item of value) collectTicketOffers(item, offers);
+    return;
+  }
+
+  if (!value || typeof value !== "object") return;
+
+  const record = value as Record<string, unknown>;
+  const recordOffers = record.offers;
+  if (recordOffers) {
+    for (const offer of Array.isArray(recordOffers) ? recordOffers : [recordOffers]) {
+      const ticketOffer = normalizeTicketOffer(offer);
+      if (ticketOffer) offers.push(ticketOffer);
+    }
+  }
+
+  for (const nested of Object.values(record)) {
+    if (nested && typeof nested === "object") collectTicketOffers(nested, offers);
+  }
+}
+
+function normalizeTicketOffer(value: unknown): ZeffyTicketOffer | null {
+  if (!value || typeof value !== "object") return null;
+
+  const offer = value as Record<string, unknown>;
+  const type = String(offer["@type"] ?? offer.type ?? "").toLowerCase();
+  if (type && type !== "offer") return null;
+
+  const availability = String(offer.availability ?? "").toLowerCase();
+  if (availability.includes("outofstock") || availability.includes("soldout")) return null;
+
+  const name = decodeHtmlText(String(offer.name ?? "")).trim();
+  const price = Number(offer.price);
+  const currency = String(offer.priceCurrency ?? offer.currency ?? "CAD").trim().toUpperCase();
+
+  if (!name || !Number.isFinite(price) || price < 0 || !/^[A-Z]{3}$/.test(currency)) return null;
+
+  return {
+    name,
+    description: decodeHtmlText(String(offer.description ?? "")).trim(),
+    price,
+    currency,
+  };
+}
+
+function dedupeTicketOffers(offers: ZeffyTicketOffer[]) {
+  const seen = new Set<string>();
+  return offers.filter((offer) => {
+    const key = `${offer.name.toLowerCase()}:${offer.price}:${offer.currency}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function decodeHtmlText(value: string) {
+  return value.replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (match, entity: string) => {
+    const normalized = entity.toLowerCase();
+    if (normalized.startsWith("#x")) {
+      const codePoint = Number.parseInt(normalized.slice(2), 16);
+      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : match;
+    }
+    if (normalized.startsWith("#")) {
+      const codePoint = Number.parseInt(normalized.slice(1), 10);
+      return Number.isFinite(codePoint) ? String.fromCodePoint(codePoint) : match;
+    }
+
+    return (
+      {
+        amp: "&",
+        apos: "'",
+        gt: ">",
+        lt: "<",
+        nbsp: " ",
+        quot: '"',
+      }[normalized] ?? match
+    );
+  });
 }
