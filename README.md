@@ -1,6 +1,6 @@
 # FCF Events
 
-Private event operations MVP for FCF: event management, sessions, registration, QR tickets, staff check-in, attendee CRM, analytics, SMS reminders, Airtable sync, and audit logs.
+Private event operations MVP for FCF: event management, sessions, registration, Zeffy payment handoff, QR tickets, staff check-in, attendee CRM, analytics, SMS reminders, Airtable sync, and audit logs.
 
 ## Stack
 - Next.js 15 App Router
@@ -16,6 +16,7 @@ Private event operations MVP for FCF: event management, sessions, registration, 
 - date-fns
 - sonner
 - next-themes
+- qrcode
 
 `@twilio/rest` is not published on npm, so this MVP uses a server-only Twilio REST adapter with `fetch` rather than silently adding the separate `twilio` package.
 
@@ -40,7 +41,9 @@ npm run build
 - Read `docs/qa-checklists.md` before launch.
 
 ## Important Limitations
-- Payments are future-provider/manual only. Stripe is intentionally not included.
-- Email sending is adapter-only and marked `TODO_EXTERNAL_PROVIDER_REQUIRED`.
+- Paid registrations use Zeffy-hosted forms plus webhook/sync reconciliation. Zeffy forms are created manually in Zeffy, then linked to events in the dashboard.
+- Stripe is intentionally not included directly.
+- Event confirmation email uses Resend when `RESEND_API_KEY` and `EMAIL_FROM` are configured.
+- Supabase Auth email still needs Supabase SMTP configuration for production account emails.
 - Ticket PDF export uses browser print/save.
 - Twilio credentials and Airtable tokens require `APP_ENCRYPTION_KEY` before production storage.

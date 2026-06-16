@@ -1,5 +1,6 @@
 import {
   demoAttendees,
+  demoDiscountCodes,
   demoEvents,
   demoMetrics,
   demoOrganizationId,
@@ -8,16 +9,24 @@ import {
   demoTicketBreakdown,
   demoTicketTypes,
 } from "@/lib/demo-data";
+import { ensureDefaultEmailTemplates } from "@/lib/email/templates";
 import { isServiceRoleConfigured } from "@/lib/env";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import type {
   AccountTicketSummary,
+  AttendeeDetail,
+  AttendeeEventTicket,
   AttendeeSummary,
   DashboardMetrics,
+  DiscountCodeSummary,
+  EmailTemplateSummary,
+  EventAttendeeSummary,
   EventSummary,
   ManagedUserSummary,
   Role,
   SessionSummary,
+  TicketDetails,
+  TicketDetailSession,
   TicketTypeSummary,
 } from "@/lib/types";
 
@@ -72,12 +81,245 @@ export async function getTicketTypes(eventId?: string): Promise<TicketTypeSummar
   })) as TicketTypeSummary[];
 }
 
+export async function getDiscountCodes(): Promise<DiscountCodeSummary[]> {
+  if (!isServiceRoleConfigured()) return demoDiscountCodes;
+
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase
+    .from("discount_codes")
+    .select("*")
+    .eq("organization_id", demoOrganizationId)
+    .order("created_at", { ascending: false });
+
+  if (error || !data) return demoDiscountCodes;
+  if (data.length === 0) return [];
+
+  const discountIds = data.map((discount) => discount.id);
+  const { data: redemptions } = await supabase
+    .from("discount_redemptions")
+    .select("discount_code_id")
+    .eq("organization_id", demoOrganizationId)
+    .eq("success", true)
+    .in("discount_code_id", discountIds);
+
+  const redemptionCountByCode = new Map<string, number>();
+  for (const redemption of redemptions ?? []) {
+    redemptionCountByCode.set(
+      redemption.discount_code_id,
+      (redemptionCountByCode.get(redemption.discount_code_id) ?? 0) + 1,
+    );
+  }
+
+  return data.map((discount) => ({
+    ...discount,
+    amount: Number(discount.amount ?? 0),
+    applies_to_event_ids: discount.applies_to_event_ids ?? [],
+    applies_to_ticket_type_ids: discount.applies_to_ticket_type_ids ?? [],
+    successful_redemptions: redemptionCountByCode.get(discount.id) ?? 0,
+  })) as DiscountCodeSummary[];
+}
+
 export async function getAttendees(): Promise<AttendeeSummary[]> {
   if (!isServiceRoleConfigured()) return demoAttendees;
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase.from("attendees").select("*").order("last_registered_at", { ascending: false });
   if (error || !data) return demoAttendees;
   return data as AttendeeSummary[];
+}
+
+export async function getAttendeeById(id: string): Promise<AttendeeDetail | null> {
+  if (!isServiceRoleConfigured()) return demoAttendeeDetail(id);
+
+  const supabase = createSupabaseAdminClient();
+  const { data, error } = await supabase.from("attendees").select("*").eq("id", id).maybeSingle();
+  if (error || !data) return null;
+  return data as AttendeeDetail;
+}
+
+export async function getAttendeeEventTickets(attendeeId: string): Promise<AttendeeEventTicket[]> {
+  if (!isServiceRoleConfigured()) return demoAttendeeEventTickets(attendeeId);
+
+  const supabase = createSupabaseAdminClient();
+  const { data: registrations, error } = await supabase
+    .from("registrations")
+    .select("id, event_id, ticket_type_id, status, payment_status, amount_due, amount_paid, registered_at")
+    .eq("attendee_id", attendeeId)
+    .order("registered_at", { ascending: false });
+
+  if (error || !registrations?.length) return [];
+
+  const registrationIds = registrations.map((registration) => registration.id);
+  const eventIds = [...new Set(registrations.map((registration) => registration.event_id))];
+  const registrationTicketTypeIds = registrations
+    .map((registration) => registration.ticket_type_id)
+    .filter((id): id is string => Boolean(id));
+
+  const [{ data: events }, { data: tickets }, { data: sessionRows }] = await Promise.all([
+    supabase.from("events").select("id, title, slug, starts_at, ends_at, timezone, venue_name").in("id", eventIds),
+    supabase
+      .from("tickets")
+      .select("id, registration_id, ticket_code, status, issued_at, ticket_type_id")
+      .in("registration_id", registrationIds)
+      .order("issued_at", { ascending: false }),
+    supabase.from("registration_sessions").select("registration_id, session_id").in("registration_id", registrationIds),
+  ]);
+
+  const ticketTypeIds = [
+    ...new Set([
+      ...registrationTicketTypeIds,
+      ...((tickets ?? []).map((ticket) => ticket.ticket_type_id).filter((id): id is string => Boolean(id))),
+    ]),
+  ];
+  const sessionIds = [...new Set((sessionRows ?? []).map((row) => row.session_id))];
+
+  const [{ data: ticketTypes }, { data: sessions }] = await Promise.all([
+    ticketTypeIds.length
+      ? supabase.from("ticket_types").select("id, name").in("id", ticketTypeIds)
+      : Promise.resolve({ data: [] as { id: string; name: string }[] }),
+    sessionIds.length
+      ? supabase.from("sessions").select("id, title, starts_at, ends_at, room, type").in("id", sessionIds).order("starts_at")
+      : Promise.resolve({ data: [] as TicketDetailSession[] }),
+  ]);
+
+  const eventById = new Map((events ?? []).map((event) => [event.id, event]));
+  const ticketTypeById = new Map((ticketTypes ?? []).map((ticketType) => [ticketType.id, ticketType.name]));
+  const ticketByRegistrationId = new Map(
+    (tickets ?? []).map((ticket) => [
+      ticket.registration_id,
+      {
+        id: ticket.id as string,
+        code: ticket.ticket_code as string,
+        status: ticket.status as AttendeeEventTicket["ticket_status"],
+        issuedAt: ticket.issued_at as string,
+        ticketTypeId: ticket.ticket_type_id as string | null,
+      },
+    ]),
+  );
+  const sessionById = new Map(((sessions ?? []) as TicketDetailSession[]).map((session) => [session.id, session]));
+  const sessionsByRegistrationId = new Map<string, TicketDetailSession[]>();
+
+  for (const row of sessionRows ?? []) {
+    const session = sessionById.get(row.session_id);
+    if (!session) continue;
+
+    const current = sessionsByRegistrationId.get(row.registration_id) ?? [];
+    current.push(session);
+    sessionsByRegistrationId.set(row.registration_id, current);
+  }
+
+  return registrations.flatMap((registration) => {
+    const event = eventById.get(registration.event_id);
+    if (!event) return [];
+
+    const ticket = ticketByRegistrationId.get(registration.id);
+    const ticketTypeId = registration.ticket_type_id ?? ticket?.ticketTypeId ?? null;
+
+    return {
+      registration_id: registration.id,
+      registration_status: String(registration.status),
+      payment_status: String(registration.payment_status),
+      amount_due: Number(registration.amount_due ?? 0),
+      amount_paid: Number(registration.amount_paid ?? 0),
+      registered_at: String(registration.registered_at),
+      event_id: String(event.id),
+      event_title: String(event.title),
+      event_slug: String(event.slug),
+      event_starts_at: String(event.starts_at),
+      event_ends_at: String(event.ends_at),
+      event_timezone: String(event.timezone ?? "America/Toronto"),
+      venue_name: event.venue_name ?? null,
+      ticket_type_name: ticketTypeId ? ticketTypeById.get(ticketTypeId) ?? null : null,
+      ticket_id: ticket?.id ?? null,
+      ticket_code: ticket?.code ?? null,
+      ticket_status: ticket?.status ?? null,
+      issued_at: ticket?.issuedAt ?? null,
+      sessions: sessionsByRegistrationId.get(registration.id) ?? [],
+    };
+  });
+}
+
+export async function getEmailTemplates(organizationId: string): Promise<EmailTemplateSummary[]> {
+  return ensureDefaultEmailTemplates(organizationId);
+}
+
+export async function getEventAttendees(eventId: string): Promise<EventAttendeeSummary[]> {
+  if (!isServiceRoleConfigured()) return demoEventAttendees(eventId);
+
+  const supabase = createSupabaseAdminClient();
+  const { data: registrations, error } = await supabase
+    .from("registrations")
+    .select("id, attendee_id, ticket_type_id, status, payment_status, registered_at")
+    .eq("event_id", eventId)
+    .order("registered_at", { ascending: false });
+
+  if (error || !registrations?.length) return [];
+
+  const attendeeIds = [...new Set(registrations.map((registration) => registration.attendee_id))];
+  const ticketTypeIds = [
+    ...new Set(registrations.map((registration) => registration.ticket_type_id).filter((id): id is string => Boolean(id))),
+  ];
+  const registrationIds = registrations.map((registration) => registration.id);
+
+  const ticketTypesPromise = ticketTypeIds.length
+    ? supabase.from("ticket_types").select("id, name").in("id", ticketTypeIds)
+    : Promise.resolve({ data: [] as { id: string; name: string }[] });
+
+  const [{ data: attendees }, { data: ticketTypes }, { data: tickets }, { data: attendanceLogs }] =
+    await Promise.all([
+      supabase.from("attendees").select("*").in("id", attendeeIds),
+      ticketTypesPromise,
+      supabase
+        .from("tickets")
+        .select("id, registration_id, ticket_code, status, ticket_type_id")
+        .eq("event_id", eventId)
+        .in("registration_id", registrationIds),
+      supabase
+        .from("attendance_logs")
+        .select("registration_id, checked_in_at")
+        .eq("event_id", eventId)
+        .eq("scope", "event")
+        .in("registration_id", registrationIds)
+        .order("checked_in_at", { ascending: false }),
+    ]);
+
+  const attendeeById = new Map(((attendees ?? []) as AttendeeSummary[]).map((attendee) => [attendee.id, attendee]));
+  const ticketTypeById = new Map((ticketTypes ?? []).map((ticketType) => [ticketType.id, ticketType.name]));
+  const ticketByRegistrationId = new Map(
+    (tickets ?? []).map((ticket) => [
+      ticket.registration_id,
+      {
+        code: ticket.ticket_code as string,
+        status: ticket.status as EventAttendeeSummary["ticket_status"],
+        ticketTypeId: ticket.ticket_type_id as string | null,
+      },
+    ]),
+  );
+  const checkInByRegistrationId = new Map<string, string>();
+  for (const log of attendanceLogs ?? []) {
+    if (!checkInByRegistrationId.has(log.registration_id)) {
+      checkInByRegistrationId.set(log.registration_id, log.checked_in_at);
+    }
+  }
+
+  return registrations.flatMap((registration) => {
+    const attendee = attendeeById.get(registration.attendee_id);
+    if (!attendee) return [];
+
+    const ticket = ticketByRegistrationId.get(registration.id);
+    const ticketTypeId = registration.ticket_type_id ?? ticket?.ticketTypeId ?? null;
+
+    return {
+      ...attendee,
+      registration_id: registration.id,
+      registration_status: String(registration.status),
+      payment_status: String(registration.payment_status),
+      registered_at: String(registration.registered_at),
+      ticket_code: ticket?.code ?? null,
+      ticket_status: ticket?.status ?? null,
+      ticket_type_name: ticketTypeId ? ticketTypeById.get(ticketTypeId) ?? null : null,
+      checked_in_at: checkInByRegistrationId.get(registration.id) ?? null,
+    };
+  });
 }
 
 export async function getDashboardMetrics(): Promise<DashboardMetrics> {
@@ -170,6 +412,7 @@ export async function getAccountTickets(email: string | null): Promise<AccountTi
 
     return {
       ticket_id: ticket.id,
+      registration_id: ticket.registration_id,
       ticket_code: ticket.ticket_code,
       ticket_status: ticket.status as AccountTicketSummary["ticket_status"],
       issued_at: ticket.issued_at,
@@ -187,6 +430,112 @@ export async function getAccountTickets(email: string | null): Promise<AccountTi
       registration_status: registration.status,
     };
   });
+}
+
+export async function getTicketDetails(ticketCode: string): Promise<TicketDetails | null> {
+  if (!isServiceRoleConfigured()) return demoTicketDetails(ticketCode);
+
+  const supabase = createSupabaseAdminClient();
+  const { data: ticketData, error: ticketError } = await supabase
+    .from("tickets")
+    .select("id, organization_id, ticket_code, status, issued_at, registration_id, event_id, attendee_id, ticket_type_id")
+    .eq("ticket_code", ticketCode)
+    .maybeSingle();
+
+  if (ticketError || !ticketData) return null;
+
+  const ticket = ticketData as {
+    id: string;
+    organization_id: string;
+    ticket_code: string;
+    status: TicketDetails["ticket_status"];
+    issued_at: string;
+    registration_id: string;
+    event_id: string;
+    attendee_id: string;
+    ticket_type_id: string | null;
+  };
+
+  const [{ data: event }, { data: attendee }, { data: registration }, { data: ticketType }, { data: sessionRows }] =
+    await Promise.all([
+      supabase
+        .from("events")
+        .select("id, title, slug, description, starts_at, ends_at, timezone, venue_name, address, room, minimum_age, compliance_notes")
+        .eq("id", ticket.event_id)
+        .maybeSingle(),
+      supabase
+        .from("attendees")
+        .select("full_name, email, phone, company, role_title")
+        .eq("id", ticket.attendee_id)
+        .maybeSingle(),
+      supabase
+        .from("registrations")
+        .select("status, payment_status, amount_due, amount_paid")
+        .eq("id", ticket.registration_id)
+        .maybeSingle(),
+      ticket.ticket_type_id
+        ? supabase
+            .from("ticket_types")
+            .select("name, description, price, currency")
+            .eq("id", ticket.ticket_type_id)
+            .maybeSingle()
+        : Promise.resolve({ data: null }),
+      supabase.from("registration_sessions").select("session_id").eq("registration_id", ticket.registration_id),
+    ]);
+
+  if (!event || !attendee || !registration) return null;
+
+  const sessionIds = ((sessionRows ?? []) as { session_id: string }[]).map((row) => row.session_id);
+  const { data: sessions } = sessionIds.length
+    ? await supabase
+        .from("sessions")
+        .select("id, title, starts_at, ends_at, room, type")
+        .in("id", sessionIds)
+        .order("starts_at")
+    : { data: [] };
+
+  return {
+    ticket_id: ticket.id,
+    registration_id: ticket.registration_id,
+    ticket_code: ticket.ticket_code,
+    ticket_status: ticket.status,
+    issued_at: ticket.issued_at,
+    registration_status: String(registration.status),
+    payment_status: String(registration.payment_status),
+    amount_due: Number(registration.amount_due ?? 0),
+    amount_paid: Number(registration.amount_paid ?? 0),
+    organization_id: ticket.organization_id,
+    event_id: String(event.id),
+    event_title: String(event.title),
+    event_slug: String(event.slug),
+    event_description: String(event.description ?? ""),
+    event_starts_at: String(event.starts_at),
+    event_ends_at: String(event.ends_at),
+    event_timezone: String(event.timezone ?? "America/Toronto"),
+    venue_name: event.venue_name ?? null,
+    address: event.address ?? null,
+    room: event.room ?? null,
+    minimum_age: Number(event.minimum_age ?? 19),
+    compliance_notes: event.compliance_notes ?? null,
+    ticket_type_name: ticketType?.name ?? null,
+    ticket_type_description: ticketType?.description ?? null,
+    ticket_type_price: ticketType ? Number(ticketType.price ?? 0) : null,
+    ticket_type_currency: ticketType?.currency ?? null,
+    attendee_id: ticket.attendee_id,
+    attendee_name: String(attendee.full_name ?? "FCF attendee"),
+    attendee_email: attendee.email ?? null,
+    attendee_phone: attendee.phone ?? null,
+    attendee_company: attendee.company ?? null,
+    attendee_role_title: attendee.role_title ?? null,
+    sessions: ((sessions ?? []) as TicketDetailSession[]).map((session) => ({
+      id: session.id,
+      title: session.title,
+      starts_at: session.starts_at,
+      ends_at: session.ends_at,
+      room: session.room,
+      type: session.type,
+    })),
+  };
 }
 
 export async function getManagedUsers(): Promise<ManagedUserSummary[]> {
@@ -274,6 +623,140 @@ export async function getManagedUsers(): Promise<ManagedUserSummary[]> {
   });
 }
 
+function demoTicketDetails(ticketCode: string): TicketDetails {
+  const event = demoEvents[0];
+  const attendee = demoAttendees[0];
+  const ticketType = demoTicketTypes[0];
+  const sessions = demoSessions.filter((session) => session.event_id === event.id);
+
+  return {
+    ticket_id: "88888888-8888-4888-8888-888888888800",
+    registration_id: "99999999-9999-4999-8999-999999999900",
+    ticket_code: ticketCode,
+    ticket_status: "active",
+    issued_at: new Date().toISOString(),
+    registration_status: "confirmed",
+    payment_status: ticketType.price > 0 ? "pending" : "not_required",
+    amount_due: ticketType.price,
+    amount_paid: 0,
+    organization_id: demoOrganizationId,
+    event_id: event.id,
+    event_title: event.title,
+    event_slug: event.slug,
+    event_description: event.description,
+    event_starts_at: event.starts_at,
+    event_ends_at: event.ends_at,
+    event_timezone: event.timezone,
+    venue_name: event.venue_name,
+    address: event.address,
+    room: event.room,
+    minimum_age: event.minimum_age,
+    compliance_notes: event.compliance_notes,
+    ticket_type_name: ticketType.name,
+    ticket_type_description: ticketType.description,
+    ticket_type_price: ticketType.price,
+    ticket_type_currency: ticketType.currency,
+    attendee_id: attendee.id,
+    attendee_name: attendee.full_name,
+    attendee_email: attendee.email,
+    attendee_phone: attendee.phone,
+    attendee_company: attendee.company,
+    attendee_role_title: attendee.role_title,
+    sessions,
+  };
+}
+
+function demoAttendeeDetail(id: string): AttendeeDetail | null {
+  const attendee = demoAttendees.find((item) => item.id === id);
+  if (!attendee) return null;
+
+  return {
+    ...attendee,
+    organization_id: demoOrganizationId,
+    date_of_birth: "1990-01-01",
+    tags: [],
+    notes: attendee.id === demoAttendees[0].id ? "Prefers email confirmations and VIP seating when available." : null,
+    first_seen_at: attendee.last_registered_at ?? new Date().toISOString(),
+    created_at: attendee.last_registered_at ?? new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+}
+
+function demoAttendeeEventTickets(attendeeId: string): AttendeeEventTicket[] {
+  const attendee = demoAttendees.find((item) => item.id === attendeeId);
+  if (!attendee) return [];
+
+  if (attendee.id === demoAttendees[1]?.id) {
+    const event = demoEvents[0];
+    const ticketType = demoTicketTypes[1] ?? demoTicketTypes[0];
+
+    return [
+      {
+        registration_id: "99999999-9999-4999-8999-999999999992",
+        registration_status: "pending",
+        payment_status: "pending",
+        amount_due: ticketType.price,
+        amount_paid: 0,
+        registered_at: attendee.last_registered_at ?? new Date().toISOString(),
+        event_id: event.id,
+        event_title: event.title,
+        event_slug: event.slug,
+        event_starts_at: event.starts_at,
+        event_ends_at: event.ends_at,
+        event_timezone: event.timezone,
+        venue_name: event.venue_name,
+        ticket_type_name: ticketType.name,
+        ticket_id: null,
+        ticket_code: null,
+        ticket_status: null,
+        issued_at: null,
+        sessions: demoSessions.filter((session) => session.event_id === event.id),
+      },
+    ];
+  }
+
+  return demoAccountTickets().map((ticket) => ({
+    registration_id:
+      ticket.ticket_code === "FCF-DEMO-2026"
+        ? "99999999-9999-4999-8999-999999999991"
+        : "99999999-9999-4999-8999-999999999993",
+    registration_status: ticket.registration_status,
+    payment_status: ticket.payment_status,
+    amount_due: ticket.amount_due,
+    amount_paid: ticket.amount_paid,
+    registered_at: ticket.issued_at,
+    event_id: ticket.event_id,
+    event_title: ticket.event_title,
+    event_slug: ticket.event_slug,
+    event_starts_at: ticket.event_starts_at,
+    event_ends_at: ticket.event_ends_at,
+    event_timezone: "America/Toronto",
+    venue_name: ticket.venue_name,
+    ticket_type_name: ticket.ticket_type_name,
+    ticket_id: ticket.ticket_id,
+    ticket_code: ticket.ticket_code,
+    ticket_status: ticket.ticket_status,
+    issued_at: ticket.issued_at,
+    sessions: ticket.event_id === demoEvents[0].id ? demoSessions.filter((session) => session.event_id === ticket.event_id) : [],
+  }));
+}
+
+function demoEventAttendees(eventId: string): EventAttendeeSummary[] {
+  if (eventId !== demoEvents[0].id) return [];
+
+  return demoAttendees.map((attendee, index) => ({
+    ...attendee,
+    registration_id: `99999999-9999-4999-8999-99999999999${index + 1}`,
+    registration_status: index === 0 ? "confirmed" : "pending",
+    payment_status: index === 0 ? "paid" : "pending",
+    registered_at: attendee.last_registered_at ?? new Date().toISOString(),
+    ticket_code: index === 0 ? "FCF-DEMO-2026" : null,
+    ticket_status: index === 0 ? "active" : null,
+    ticket_type_name: demoTicketTypes[index]?.name ?? demoTicketTypes[0]?.name ?? null,
+    checked_in_at: index === 0 ? attendee.last_attended_at : null,
+  }));
+}
+
 function demoAccountTickets(): AccountTicketSummary[] {
   const upcomingEvent = demoEvents[0];
   const pastStartsAt = new Date(Date.now() - 1000 * 60 * 60 * 24 * 90).toISOString();
@@ -282,6 +765,7 @@ function demoAccountTickets(): AccountTicketSummary[] {
   return [
     {
       ticket_id: "88888888-8888-4888-8888-888888888881",
+      registration_id: "99999999-9999-4999-8999-999999999991",
       ticket_code: "FCF-DEMO-2026",
       ticket_status: "active",
       issued_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 2).toISOString(),
@@ -300,6 +784,7 @@ function demoAccountTickets(): AccountTicketSummary[] {
     },
     {
       ticket_id: "88888888-8888-4888-8888-888888888882",
+      registration_id: "99999999-9999-4999-8999-999999999992",
       ticket_code: "FCF-PAST-2026",
       ticket_status: "used",
       issued_at: new Date(Date.now() - 1000 * 60 * 60 * 24 * 120).toISOString(),

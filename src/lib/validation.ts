@@ -23,6 +23,48 @@ export const checkInSchema = z.object({
   sessionId: z.string().uuid().optional().nullable(),
 });
 
+export const checkInLookupSchema = z.object({
+  eventId: z.string().uuid(),
+  sessionId: z.string().uuid().optional().nullable(),
+  query: z.string().trim().min(2, "Enter at least 2 characters.").max(120),
+});
+
+const optionalEmailSchema = z
+  .string()
+  .trim()
+  .email("Use a valid email address.")
+  .optional()
+  .or(z.literal(""));
+
+const optionalTextSchema = z.string().trim().max(120).optional().or(z.literal(""));
+
+export const walkUpCheckInSchema = z.object({
+  eventId: z.string().uuid(),
+  sessionId: z.string().uuid().optional().nullable(),
+  ticketTypeId: z.string().uuid(),
+  firstName: z.string().trim().min(1, "First name is required.").max(80),
+  lastName: z.string().trim().min(1, "Last name is required.").max(80),
+  email: optionalEmailSchema,
+  phone: z.string().trim().max(32).optional().or(z.literal("")),
+  company: optionalTextSchema,
+  roleTitle: optionalTextSchema,
+  paymentMode: z.enum(["cash", "comp"]).default("cash"),
+});
+
+export const attendeeUpdateSchema = z.object({
+  attendeeId: z.string().uuid(),
+  firstName: z.string().trim().min(1, "First name is required.").max(80),
+  lastName: z.string().trim().min(1, "Last name is required.").max(80),
+  email: optionalEmailSchema,
+  phone: z.string().trim().max(32).optional().or(z.literal("")),
+  company: optionalTextSchema,
+  roleTitle: optionalTextSchema,
+  dateOfBirth: z.string().trim().optional().or(z.literal("")),
+  notes: z.string().trim().max(4000).optional().or(z.literal("")),
+  smsConsent: z.boolean().default(false),
+  emailConsent: z.boolean().default(false),
+});
+
 export const eventSchema = z.object({
   title: z.string().min(2).max(160),
   slug: z
@@ -40,7 +82,69 @@ export const eventSchema = z.object({
   status: z.enum(["draft", "published", "cancelled", "past"]).default("draft"),
   visibility: z.enum(["private", "public", "unlisted"]).default("private"),
   minimumAge: z.coerce.number().int().min(18).max(25).default(19),
+  zeffyCampaignId: z.string().trim().max(120).optional(),
+  zeffyFormUrl: z
+    .string()
+    .trim()
+    .url("Use a valid Zeffy form URL")
+    .max(500)
+    .optional()
+    .or(z.literal("")),
 });
+
+export const zeffyEventSettingsSchema = z.object({
+  eventId: z.string().uuid(),
+  zeffyCampaignId: z.string().trim().max(120).optional(),
+  zeffyFormUrl: z
+    .string()
+    .trim()
+    .url("Use a valid Zeffy form URL")
+    .max(500)
+    .optional()
+    .or(z.literal("")),
+});
+
+export const discountTypeSchema = z.enum(["percentage", "fixed_amount", "comp", "access_only"]);
+
+export const discountCodeSchema = z
+  .object({
+    id: z.string().uuid().optional(),
+    code: z
+      .string()
+      .trim()
+      .min(2, "Code is required")
+      .max(80)
+      .regex(/^[A-Z0-9_-]+$/i, "Use letters, numbers, dashes, or underscores")
+      .transform((code) => code.toUpperCase()),
+    description: z.string().trim().max(240).optional().or(z.literal("")),
+    type: discountTypeSchema,
+    amount: z.coerce.number().min(0).max(999999),
+    appliesToEventIds: z.array(z.string().uuid()).default([]),
+    appliesToTicketTypeIds: z.array(z.string().uuid()).default([]),
+    maxTotalUses: z.coerce.number().int().positive().optional(),
+    oneUsePerAttendee: z.boolean().default(true),
+    expiresAt: z.string().optional().or(z.literal("")),
+    active: z.boolean().default(true),
+    minimumTicketQuantity: z.coerce.number().int().positive().default(1),
+    internalNotes: z.string().trim().max(1000).optional().or(z.literal("")),
+  })
+  .superRefine((values, ctx) => {
+    if (values.type === "percentage" && (values.amount <= 0 || values.amount > 100)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["amount"],
+        message: "Percentage discounts must be between 1 and 100.",
+      });
+    }
+
+    if (values.type === "fixed_amount" && values.amount <= 0) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["amount"],
+        message: "Fixed amount discounts need an amount.",
+      });
+    }
+  });
 
 export const twilioSettingsSchema = z.object({
   organizationId: z.string().uuid(),
@@ -60,6 +164,14 @@ export const smsSendSchema = z.object({
   organizationId: z.string().uuid(),
   to: z.string().min(7),
   body: z.string().min(8).max(1200),
+});
+
+export const emailTemplateSchema = z.object({
+  id: z.string().uuid().optional(),
+  organizationId: z.string().uuid(),
+  name: z.string().trim().min(2, "Template name is required").max(120),
+  subject: z.string().trim().min(2, "Subject is required").max(200),
+  body: z.string().trim().min(8, "Body is required").max(8000),
 });
 
 export const appRoleSchema = z.enum(["owner", "admin", "manager", "check_in_staff", "viewer"]);
@@ -101,6 +213,23 @@ export const accountPasswordSchema = z
     message: "Passwords must match",
     path: ["confirmPassword"],
   });
+
+export const accountSignupSchema = z
+  .object({
+    fullName: z.string().trim().min(2, "Name is required").max(120),
+    email: z.string().trim().toLowerCase().email("Use a valid email address"),
+    password: z.string().min(12, "Use at least 12 characters"),
+    confirmPassword: z.string().min(12, "Confirm your password"),
+  })
+  .refine((values) => values.password === values.confirmPassword, {
+    message: "Passwords must match",
+    path: ["confirmPassword"],
+  });
+
+export const ticketEmailSchema = z.object({
+  ticketCode: z.string().min(4).max(120),
+  recipientEmail: z.string().trim().toLowerCase().email("Use a valid email address"),
+});
 
 export const airtableSettingsSchema = z.object({
   organizationId: z.string().uuid(),

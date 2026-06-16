@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PhoneInput } from "@/components/phone-input";
 import { SelectField } from "@/components/ui/select-field";
 import { registrationSchema } from "@/lib/validation";
 import { currency } from "@/lib/utils";
@@ -55,12 +56,26 @@ export function RegistrationForm({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(values),
       });
-      const result = (await response.json()) as { ok: boolean; ticketCode?: string; message: string };
-      if (!result.ok || !result.ticketCode) {
+      const result = (await response.json()) as {
+        ok: boolean;
+        ticketCode?: string;
+        paymentUrl?: string;
+        message: string;
+      };
+      if (!result.ok) {
         toast.error(result.message);
         return;
       }
-      toast.success("Registration confirmed");
+      if (result.paymentUrl) {
+        toast.success("Registration saved. Continuing to Zeffy.");
+        window.location.assign(result.paymentUrl);
+        return;
+      }
+      if (!result.ticketCode) {
+        toast.error("Registration completed, but no ticket was issued.");
+        return;
+      }
+      toast.success(result.message);
       router.push(`/ticket/${encodeURIComponent(result.ticketCode)}`);
     });
   }
@@ -112,7 +127,7 @@ export function RegistrationForm({
               <Input type="email" {...form.register("email")} autoComplete="email" />
             </Field>
             <Field label="Phone" error={form.formState.errors.phone?.message}>
-              <Input {...form.register("phone")} autoComplete="tel" />
+              <PhoneInput {...form.register("phone")} />
             </Field>
             <Field label="Company">
               <Input {...form.register("company")} />

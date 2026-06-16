@@ -18,6 +18,8 @@ export type EventSummary = {
   visibility: "private" | "public" | "unlisted";
   minimum_age: number;
   compliance_notes: string | null;
+  zeffy_campaign_id: string | null;
+  zeffy_form_url: string | null;
 };
 
 export type SessionSummary = {
@@ -44,6 +46,28 @@ export type TicketTypeSummary = {
   visibility: "public" | "private" | "hidden";
 };
 
+export type DiscountType = "percentage" | "fixed_amount" | "comp" | "access_only";
+
+export type DiscountCodeSummary = {
+  id: string;
+  organization_id: string;
+  code: string;
+  description: string | null;
+  type: DiscountType;
+  amount: number;
+  applies_to_event_ids: string[];
+  applies_to_ticket_type_ids: string[];
+  max_total_uses: number | null;
+  one_use_per_attendee: boolean;
+  expires_at: string | null;
+  active: boolean;
+  minimum_ticket_quantity: number;
+  internal_notes: string | null;
+  created_at: string;
+  updated_at: string;
+  successful_redemptions: number;
+};
+
 export type AttendeeSummary = {
   id: string;
   first_name: string;
@@ -60,6 +84,49 @@ export type AttendeeSummary = {
   sessions_attended_count: number;
   last_registered_at: string | null;
   last_attended_at: string | null;
+};
+
+export type EventAttendeeSummary = AttendeeSummary & {
+  registration_id: string;
+  registration_status: string;
+  payment_status: string;
+  registered_at: string;
+  ticket_code: string | null;
+  ticket_status: TicketSummary["status"] | null;
+  ticket_type_name: string | null;
+  checked_in_at: string | null;
+};
+
+export type AttendeeDetail = AttendeeSummary & {
+  organization_id: string;
+  date_of_birth: string | null;
+  tags: string[];
+  notes: string | null;
+  first_seen_at: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AttendeeEventTicket = {
+  registration_id: string;
+  registration_status: string;
+  payment_status: string;
+  amount_due: number;
+  amount_paid: number;
+  registered_at: string;
+  event_id: string;
+  event_title: string;
+  event_slug: string;
+  event_starts_at: string;
+  event_ends_at: string;
+  event_timezone: string;
+  venue_name: string | null;
+  ticket_type_name: string | null;
+  ticket_id: string | null;
+  ticket_code: string | null;
+  ticket_status: TicketSummary["status"] | null;
+  issued_at: string | null;
+  sessions: TicketDetailSession[];
 };
 
 export type EventAccessAssignment = {
@@ -81,6 +148,7 @@ export type ManagedUserSummary = {
 
 export type AccountTicketSummary = {
   ticket_id: string;
+  registration_id: string;
   ticket_code: string;
   ticket_status: TicketSummary["status"];
   issued_at: string;
@@ -98,6 +166,61 @@ export type AccountTicketSummary = {
   registration_status: string;
 };
 
+export type EmailTemplateSummary = {
+  id: string;
+  organization_id: string;
+  name: string;
+  subject: string;
+  body: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TicketDetailSession = {
+  id: string;
+  title: string;
+  starts_at: string;
+  ends_at: string;
+  room: string | null;
+  type: string;
+};
+
+export type TicketDetails = {
+  ticket_id: string;
+  registration_id: string;
+  ticket_code: string;
+  ticket_status: TicketSummary["status"];
+  issued_at: string;
+  registration_status: string;
+  payment_status: string;
+  amount_due: number;
+  amount_paid: number;
+  organization_id: string;
+  event_id: string;
+  event_title: string;
+  event_slug: string;
+  event_description: string;
+  event_starts_at: string;
+  event_ends_at: string;
+  event_timezone: string;
+  venue_name: string | null;
+  address: string | null;
+  room: string | null;
+  minimum_age: number;
+  compliance_notes: string | null;
+  ticket_type_name: string | null;
+  ticket_type_description: string | null;
+  ticket_type_price: number | null;
+  ticket_type_currency: string | null;
+  attendee_id: string;
+  attendee_name: string;
+  attendee_email: string | null;
+  attendee_phone: string | null;
+  attendee_company: string | null;
+  attendee_role_title: string | null;
+  sessions: TicketDetailSession[];
+};
+
 export type TicketSummary = {
   id: string;
   ticket_code: string;
@@ -110,6 +233,9 @@ export type TicketSummary = {
 export type RegistrationResult = {
   ok: boolean;
   ticketCode?: string;
+  paymentUrl?: string;
+  registrationId?: string;
+  requiresPayment?: boolean;
   message: string;
 };
 
@@ -126,6 +252,30 @@ export type CheckInResult = {
   ticketTypeName?: string;
   checkedInAt?: string;
   priorCheckedInAt?: string;
+};
+
+export type CheckInLookupResult = {
+  ticketId: string;
+  ticketCode: string;
+  ticketStatus: TicketSummary["status"];
+  attendeeName: string;
+  attendeeEmail: string | null;
+  attendeePhone: string | null;
+  ticketTypeName: string | null;
+  checkedInAt: string | null;
+};
+
+export type CheckInLookupResponse = {
+  ok: boolean;
+  message?: string;
+  results: CheckInLookupResult[];
+};
+
+export type WalkUpCheckInResult = CheckInResult & {
+  ok: boolean;
+  message?: string;
+  ticketCode?: string;
+  registrationId?: string;
 };
 
 export type DashboardMetrics = {

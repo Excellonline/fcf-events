@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PhoneInput } from "@/components/phone-input";
 import {
   updateAccountEmailAction,
   updateAccountPasswordAction,
@@ -15,7 +16,7 @@ const messages: Record<string, string> = {
   profile: "Profile updated.",
   email: "Email update requested. You may need to confirm the new email address.",
   password: "Password updated.",
-  demo: "Demo mode: settings form validated.",
+  demo: "Settings form validated.",
 };
 
 const errors: Record<string, string> = {
@@ -53,7 +54,7 @@ export default async function AccountSettingsPage({
                 <Input name="fullName" defaultValue={account.fullName ?? ""} autoComplete="name" required />
               </Field>
               <Field label="Phone number">
-                <Input name="phone" defaultValue={account.phone ?? ""} autoComplete="tel" />
+                <PhoneInput name="phone" defaultValue={account.phone ?? ""} />
               </Field>
               <Button type="submit">
                 <Save className="h-4 w-4" aria-hidden />
