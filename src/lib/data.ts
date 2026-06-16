@@ -21,7 +21,7 @@ export async function getEvents(): Promise<EventSummary[]> {
   if (!isServiceRoleConfigured()) return demoEvents;
   const supabase = createSupabaseAdminClient();
   const { data, error } = await supabase.from("events").select("*").order("starts_at");
-  if (error || !data) return demoEvents;
+  if (error || !data || data.length === 0) return demoEvents;
   return data as EventSummary[];
 }
 
@@ -111,4 +111,3 @@ export async function getAnalyticsData() {
     ticketBreakdown: demoTicketBreakdown,
   };
 }
-

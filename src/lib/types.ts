@@ -12,6 +12,7 @@ export type EventSummary = {
   address: string | null;
   room: string | null;
   description: string;
+  event_category?: string | null;
   capacity: number | null;
   status: "draft" | "published" | "cancelled" | "past";
   visibility: "private" | "public" | "unlisted";
@@ -107,4 +108,3 @@ export type NavItem = {
   href: string;
   label: string;
 };
-
