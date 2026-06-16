@@ -14,6 +14,7 @@ import {
 } from "@/lib/validation";
 import { writeAuditLog } from "@/lib/audit";
 import type { Role } from "@/lib/types";
+import { fetchZeffyTicketOffers, type ZeffyTicketOffer } from "@/lib/zeffy";
 
 const EVENT_MANAGEMENT_ROLES: Role[] = ["owner", "admin", "manager"];
 
@@ -51,6 +52,8 @@ export async function createEventAction(input: FormData) {
     return { ok: false, message: parsedTicketTypes.error.issues[0]?.message ?? "Invalid ticket types." };
   }
 
+  const access = await requireDashboardAccess(EVENT_MANAGEMENT_ROLES);
+
   if (!isServiceRoleConfigured()) {
     return { ok: true, message: "Event and ticket types validated. Connect Supabase to persist them.", persisted: false };
   }
@@ -83,27 +86,51 @@ export async function createEventAction(input: FormData) {
 
   if (error) return { ok: false, message: error.message };
 
+  const eventDays = await ensureEventDaysForEvent(supabase, {
+    eventId: data.id,
+    organizationId: demoOrganizationId,
+    startsAt: values.startsAt,
+    endsAt: values.endsAt,
+  });
+
   if (ticketTypeValues.length) {
-    const { error: ticketTypeError } = await supabase.from("ticket_types").insert(
+    const { data: createdTicketTypes, error: ticketTypeError } = await supabase.from("ticket_types").insert(
       ticketTypeValues.map((ticketType) => ({
         organization_id: demoOrganizationId,
         event_id: data.id,
         ...toTicketTypePayload(ticketType),
       })),
-    );
+    ).select("id");
 
     if (ticketTypeError) {
       await supabase.from("events").delete().eq("id", data.id).eq("organization_id", demoOrganizationId);
       return { ok: false, message: ticketTypeError.message };
     }
+
+    await setTicketTypesDefaultDayAccess({
+      supabase,
+      organizationId: demoOrganizationId,
+      ticketTypeIds: (createdTicketTypes ?? []).map((ticketType) => ticketType.id as string),
+      eventDayIds: eventDays.map((day) => day.id),
+    });
   }
+
+  const syncResult = values.zeffyFormUrl
+    ? await syncZeffyTicketTypes({
+        supabase,
+        eventId: data.id,
+        organizationId: demoOrganizationId,
+        formUrl: values.zeffyFormUrl,
+      })
+    : null;
 
   await writeAuditLog({
     organizationId: demoOrganizationId,
+    actorUserId: access.userId ?? undefined,
     action: "event.created",
     entityType: "event",
     entityId: data.id,
-    metadata: { ticketTypeCount: ticketTypeValues.length },
+    metadata: { ticketTypeCount: ticketTypeValues.length + (syncResult?.synced ?? 0) },
   });
 
   revalidatePath("/");
@@ -114,7 +141,10 @@ export async function createEventAction(input: FormData) {
   revalidatePath(`/e/${values.slug}`);
   return {
     ok: true,
-    message: ticketTypeValues.length ? "Event and ticket types created." : "Event created.",
+    message: withZeffySyncMessage(
+      ticketTypeValues.length ? "Event and ticket types created." : "Event created.",
+      syncResult,
+    ),
     persisted: true,
     slug: values.slug,
   };
@@ -143,6 +173,8 @@ export async function updateEventAction(input: FormData) {
   if (!parsed.success) {
     return { ok: false, message: parsed.error.issues[0]?.message ?? "Invalid event." };
   }
+
+  const access = await requireDashboardAccess(EVENT_MANAGEMENT_ROLES);
 
   if (!isServiceRoleConfigured()) {
     return { ok: true, message: "Event validated. Connect Supabase to persist it.", persisted: false };
@@ -182,11 +214,29 @@ export async function updateEventAction(input: FormData) {
 
   if (error) return { ok: false, message: error.message };
 
+  await ensureEventDaysForEvent(supabase, {
+    eventId: existingEvent.id,
+    organizationId: existingEvent.organization_id,
+    startsAt: values.startsAt,
+    endsAt: values.endsAt,
+  });
+
+  const syncResult = values.zeffyFormUrl
+    ? await syncZeffyTicketTypes({
+        supabase,
+        eventId: existingEvent.id,
+        organizationId: existingEvent.organization_id,
+        formUrl: values.zeffyFormUrl,
+      })
+    : null;
+
   await writeAuditLog({
     organizationId: existingEvent.organization_id,
+    actorUserId: access.userId ?? undefined,
     action: "event.updated",
     entityType: "event",
     entityId: existingEvent.id,
+    metadata: syncResult ? { zeffyTicketTypesSynced: syncResult.synced } : undefined,
   });
 
   revalidatePath("/dashboard");
@@ -199,7 +249,12 @@ export async function updateEventAction(input: FormData) {
   revalidatePath(`/e/${existingEvent.slug}`);
   revalidatePath(`/e/${values.slug}`);
 
-  return { ok: true, message: "Event updated.", persisted: true, slug: values.slug };
+  return {
+    ok: true,
+    message: withZeffySyncMessage("Event updated.", syncResult),
+    persisted: true,
+    slug: values.slug,
+  };
 }
 
 export async function updateEventZeffySettingsAction(input: FormData) {
@@ -212,6 +267,8 @@ export async function updateEventZeffySettingsAction(input: FormData) {
   if (!parsed.success) {
     return { ok: false, message: parsed.error.issues[0]?.message ?? "Invalid Zeffy settings." };
   }
+
+  const access = await requireDashboardAccess(EVENT_MANAGEMENT_ROLES);
 
   if (!isServiceRoleConfigured()) {
     return { ok: true, message: "Zeffy settings validated. Connect Supabase to persist them." };
@@ -238,17 +295,28 @@ export async function updateEventZeffySettingsAction(input: FormData) {
 
   if (error) return { ok: false, message: error.message };
 
+  const syncResult = values.zeffyFormUrl
+    ? await syncZeffyTicketTypes({
+        supabase,
+        eventId: event.id,
+        organizationId: event.organization_id,
+        formUrl: values.zeffyFormUrl,
+      })
+    : null;
+
   await writeAuditLog({
     organizationId: event.organization_id,
+    actorUserId: access.userId ?? undefined,
     action: "event.zeffy_settings.updated",
     entityType: "event",
     entityId: event.id,
+    metadata: syncResult ? { zeffyTicketTypesSynced: syncResult.synced } : undefined,
   });
 
   revalidatePath("/dashboard/events");
   revalidatePath(`/dashboard/events/${event.slug}`);
   revalidatePath(`/e/${event.slug}`);
-  return { ok: true, message: "Zeffy settings updated." };
+  return { ok: true, message: withZeffySyncMessage("Zeffy settings updated.", syncResult) };
 }
 
 export async function createTicketTypeAction(input: FormData): Promise<ActionResult> {
@@ -284,6 +352,14 @@ export async function createTicketTypeAction(input: FormData): Promise<ActionRes
     .single();
 
   if (error) return { ok: false, message: error.message };
+
+  await replaceTicketTypeDayAccess({
+    supabase,
+    organizationId: event.organization_id,
+    eventId: event.id,
+    ticketTypeId: data.id,
+    eventDayIds: values.eventDayIds,
+  });
 
   await writeAuditLog({
     organizationId: event.organization_id,
@@ -335,6 +411,14 @@ export async function updateTicketTypeAction(input: FormData): Promise<ActionRes
   if (error) return { ok: false, message: error.message };
   if (!data) return { ok: false, message: "Ticket type not found." };
 
+  await replaceTicketTypeDayAccess({
+    supabase,
+    organizationId: event.organization_id,
+    eventId: event.id,
+    ticketTypeId: data.id,
+    eventDayIds: values.eventDayIds,
+  });
+
   await writeAuditLog({
     organizationId: event.organization_id,
     actorUserId: access.userId ?? undefined,
@@ -360,6 +444,7 @@ function readTicketTypeForm(input: FormData, options?: { requireId?: boolean }) 
     currency: input.get("currency") || "CAD",
     capacityLimit: input.get("capacityLimit"),
     visibility: input.get("visibility"),
+    eventDayIds: input.getAll("eventDayIds").map((value) => String(value)),
   };
 }
 
@@ -382,6 +467,265 @@ function toTicketTypePayload(values: TicketTypePayloadValues) {
     visibility: values.visibility,
     payment_method: values.price === 0 ? "free" : "manual",
   };
+}
+
+type ZeffyTicketSyncResult = {
+  synced: number;
+  inserted: number;
+  updated: number;
+  error?: string;
+};
+
+async function syncZeffyTicketTypes({
+  supabase,
+  eventId,
+  organizationId,
+  formUrl,
+}: {
+  supabase: ReturnType<typeof createSupabaseAdminClient>;
+  eventId: string;
+  organizationId: string;
+  formUrl: string;
+}): Promise<ZeffyTicketSyncResult> {
+  try {
+    const offers = await fetchZeffyTicketOffers(formUrl);
+    if (!offers.length) {
+      return { synced: 0, inserted: 0, updated: 0, error: "No Zeffy ticket prices were found on the form." };
+    }
+
+    const { data: existingTicketTypes, error } = await supabase
+      .from("ticket_types")
+      .select("id, name")
+      .eq("event_id", eventId)
+      .eq("organization_id", organizationId);
+
+    if (error) return { synced: 0, inserted: 0, updated: 0, error: error.message };
+
+    const existingByName = new Map(
+      (existingTicketTypes ?? []).map((ticketType) => [normalizeTicketName(ticketType.name as string), ticketType.id as string]),
+    );
+    let inserted = 0;
+    let updated = 0;
+
+    for (const offer of offers) {
+      const existingId = existingByName.get(normalizeTicketName(offer.name));
+      const payload = toZeffyTicketTypePayload(offer);
+
+      if (existingId) {
+        const { error: updateError } = await supabase
+          .from("ticket_types")
+          .update({
+            ...payload,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", existingId)
+          .eq("event_id", eventId)
+          .eq("organization_id", organizationId);
+
+        if (updateError) return { synced: inserted + updated, inserted, updated, error: updateError.message };
+        updated += 1;
+        continue;
+      }
+
+      const { error: insertError } = await supabase.from("ticket_types").insert({
+        organization_id: organizationId,
+        event_id: eventId,
+        ...payload,
+      });
+
+      if (insertError) return { synced: inserted + updated, inserted, updated, error: insertError.message };
+      inserted += 1;
+    }
+
+    await ensureTicketTypesHaveDefaultDayAccess({ supabase, eventId, organizationId });
+    return { synced: inserted + updated, inserted, updated };
+  } catch (error) {
+    return {
+      synced: 0,
+      inserted: 0,
+      updated: 0,
+      error: error instanceof Error ? error.message : "Could not sync Zeffy ticket prices.",
+    };
+  }
+}
+
+type EventDayRow = {
+  id: string;
+  label: string;
+  starts_at: string;
+  ends_at: string;
+  sort_order: number;
+};
+
+async function ensureEventDaysForEvent(
+  supabase: ReturnType<typeof createSupabaseAdminClient>,
+  values: { eventId: string; organizationId: string; startsAt: string; endsAt: string },
+): Promise<EventDayRow[]> {
+  const drafts = buildEventDayDrafts(values.startsAt, values.endsAt);
+  const { data: existingDays } = await supabase
+    .from("event_days")
+    .select("id, label, sort_order")
+    .eq("event_id", values.eventId)
+    .order("sort_order");
+  const existingBySortOrder = new Map((existingDays ?? []).map((day) => [day.sort_order as number, day]));
+
+  const { data, error } = await supabase
+    .from("event_days")
+    .upsert(
+      drafts.map((day) => ({
+        organization_id: values.organizationId,
+        event_id: values.eventId,
+        label: String(existingBySortOrder.get(day.sortOrder)?.label ?? `Day ${day.sortOrder + 1}`),
+        starts_at: day.startsAt,
+        ends_at: day.endsAt,
+        sort_order: day.sortOrder,
+      })),
+      { onConflict: "event_id,sort_order" },
+    )
+    .select("id, label, starts_at, ends_at, sort_order")
+    .order("sort_order");
+
+  if (error) throw new Error(error.message);
+  return (data ?? []) as EventDayRow[];
+}
+
+function buildEventDayDrafts(startsAt: string, endsAt: string) {
+  const starts = new Date(startsAt);
+  const ends = new Date(endsAt);
+  if (Number.isNaN(starts.getTime()) || Number.isNaN(ends.getTime()) || ends <= starts) {
+    return [{ startsAt, endsAt, sortOrder: 0 }];
+  }
+
+  const firstDayUtc = Date.UTC(starts.getUTCFullYear(), starts.getUTCMonth(), starts.getUTCDate());
+  const lastDayUtc = Date.UTC(ends.getUTCFullYear(), ends.getUTCMonth(), ends.getUTCDate());
+  const dayMs = 24 * 60 * 60 * 1000;
+  const dayCount = Math.max(1, Math.round((lastDayUtc - firstDayUtc) / dayMs) + 1);
+
+  return Array.from({ length: dayCount }, (_, index) => {
+    const dayStart = new Date(firstDayUtc + index * dayMs);
+    const nextDayStart = new Date(firstDayUtc + (index + 1) * dayMs);
+    const draftStarts = index === 0 ? starts : dayStart;
+    const draftEnds = index === dayCount - 1 ? ends : nextDayStart;
+
+    return {
+      startsAt: draftStarts.toISOString(),
+      endsAt: draftEnds.toISOString(),
+      sortOrder: index,
+    };
+  }).filter((day) => new Date(day.endsAt) > new Date(day.startsAt));
+}
+
+async function getEventDayIds(supabase: ReturnType<typeof createSupabaseAdminClient>, eventId: string) {
+  const { data } = await supabase.from("event_days").select("id").eq("event_id", eventId).order("sort_order");
+  return (data ?? []).map((day) => day.id as string);
+}
+
+async function replaceTicketTypeDayAccess({
+  supabase,
+  organizationId,
+  eventId,
+  ticketTypeId,
+  eventDayIds,
+}: {
+  supabase: ReturnType<typeof createSupabaseAdminClient>;
+  organizationId: string;
+  eventId: string;
+  ticketTypeId: string;
+  eventDayIds: string[];
+}) {
+  const fallbackDayIds = await getEventDayIds(supabase, eventId);
+  const dayIds = eventDayIds.length ? eventDayIds : fallbackDayIds;
+
+  await supabase.from("ticket_type_day_access").delete().eq("ticket_type_id", ticketTypeId);
+
+  if (dayIds.length) {
+    await supabase.from("ticket_type_day_access").insert(
+      dayIds.map((eventDayId) => ({
+        organization_id: organizationId,
+        ticket_type_id: ticketTypeId,
+        event_day_id: eventDayId,
+      })),
+    );
+  }
+}
+
+async function setTicketTypesDefaultDayAccess({
+  supabase,
+  organizationId,
+  ticketTypeIds,
+  eventDayIds,
+}: {
+  supabase: ReturnType<typeof createSupabaseAdminClient>;
+  organizationId: string;
+  ticketTypeIds: string[];
+  eventDayIds: string[];
+}) {
+  if (!ticketTypeIds.length || !eventDayIds.length) return;
+
+  await supabase.from("ticket_type_day_access").insert(
+    ticketTypeIds.flatMap((ticketTypeId) =>
+      eventDayIds.map((eventDayId) => ({
+        organization_id: organizationId,
+        ticket_type_id: ticketTypeId,
+        event_day_id: eventDayId,
+      })),
+    ),
+  );
+}
+
+async function ensureTicketTypesHaveDefaultDayAccess({
+  supabase,
+  eventId,
+  organizationId,
+}: {
+  supabase: ReturnType<typeof createSupabaseAdminClient>;
+  eventId: string;
+  organizationId: string;
+}) {
+  const [{ data: ticketTypes }, eventDayIdsResult] = await Promise.all([
+    supabase.from("ticket_types").select("id").eq("event_id", eventId).eq("organization_id", organizationId),
+    getEventDayIds(supabase, eventId),
+  ]);
+  const eventDayIds = eventDayIdsResult;
+  const ticketTypeIds = (ticketTypes ?? []).map((ticketType) => ticketType.id as string);
+  if (!ticketTypeIds.length || !eventDayIds.length) return;
+
+  const { data: accessRows } = await supabase
+    .from("ticket_type_day_access")
+    .select("ticket_type_id")
+    .in("ticket_type_id", ticketTypeIds);
+  const ticketTypesWithAccess = new Set((accessRows ?? []).map((access) => access.ticket_type_id as string));
+  const missingTicketTypeIds = ticketTypeIds.filter((ticketTypeId) => !ticketTypesWithAccess.has(ticketTypeId));
+
+  await setTicketTypesDefaultDayAccess({
+    supabase,
+    organizationId,
+    ticketTypeIds: missingTicketTypeIds,
+    eventDayIds,
+  });
+}
+
+function toZeffyTicketTypePayload(offer: ZeffyTicketOffer) {
+  return {
+    name: offer.name,
+    description: offer.description.slice(0, 1000),
+    price: offer.price,
+    currency: offer.currency,
+    capacity_limit: null,
+    visibility: "public" as const,
+    payment_method: offer.price === 0 ? "free" : "future_provider",
+  };
+}
+
+function normalizeTicketName(value: string) {
+  return value.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function withZeffySyncMessage(message: string, syncResult: ZeffyTicketSyncResult | null) {
+  if (!syncResult) return message;
+  if (syncResult.error) return `${message} Zeffy ticket sync warning: ${syncResult.error}`;
+  if (!syncResult.synced) return `${message} No Zeffy ticket prices were found.`;
+  return `${message} Synced ${syncResult.synced} Zeffy ticket type${syncResult.synced === 1 ? "" : "s"}.`;
 }
 
 function readTicketTypeDraftForms(input: FormData) {

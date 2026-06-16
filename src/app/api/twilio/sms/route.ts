@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
 
+import { getAuthorizedDashboardAccess } from "@/lib/auth";
+import { rateLimit } from "@/lib/security/rate-limit";
+import { clientIp, readJsonBody } from "@/lib/security/request";
 import { sendSms, TwilioConfigurationError } from "@/lib/twilio";
 
 export const runtime = "nodejs";
@@ -14,13 +17,20 @@ function isE164PhoneNumber(value: string): boolean {
 }
 
 export async function POST(request: Request) {
-  let payload: SmsRequestBody;
-
-  try {
-    payload = (await request.json()) as SmsRequestBody;
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+  const access = await getAuthorizedDashboardAccess(["owner", "admin", "manager"]);
+  if (!access) {
+    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
+
+  const limited = rateLimit(`twilio-sms:${access.userId ?? clientIp(request.headers)}`, 10, 60 * 1000);
+  if (!limited.allowed) {
+    return NextResponse.json({ error: "Too many SMS requests. Please try again later." }, { status: 429 });
+  }
+
+  const parsedPayload = await readJsonBody(request);
+  if (!parsedPayload.ok) return parsedPayload.response;
+
+  const payload = parsedPayload.data as SmsRequestBody;
 
   const to = typeof payload.to === "string" ? payload.to.trim() : "";
   const body = typeof payload.body === "string" ? payload.body.trim() : "";

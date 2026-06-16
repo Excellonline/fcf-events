@@ -3,6 +3,7 @@ import Link from "next/link";
 import { ArrowRight, KeyRound, LockKeyhole, Mail, ShieldCheck, TicketCheck } from "lucide-react";
 import { PublicFooter } from "@/components/public-footer";
 import { PublicHeader } from "@/components/public-header";
+import { PasswordInput } from "@/components/password-input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -13,6 +14,7 @@ import { isSupabaseConfigured } from "@/lib/env";
 const errorMessages: Record<string, string> = {
   invalid_credentials: "That email or password did not match an active account.",
   missing_credentials: "Enter both email and password.",
+  rate_limited: "Too many sign-in attempts. Please wait a few minutes and try again.",
 };
 
 export default async function LoginPage({ searchParams }: { searchParams?: Promise<{ error?: string }> }) {
@@ -24,7 +26,7 @@ export default async function LoginPage({ searchParams }: { searchParams?: Promi
     <main className="min-h-screen bg-[#0b0b0b] text-white">
       <PublicHeader showLogin={false} />
       <section className="bg-[linear-gradient(180deg,#0b0b0b_0%,#111111_55%,#070707_100%)]">
-        <div className="mx-auto grid min-h-[72vh] max-w-7xl items-center gap-8 px-4 py-10 md:px-8 lg:grid-cols-[minmax(0,1fr)_480px] lg:py-16">
+        <div className="mx-auto grid min-h-[72vh] max-w-7xl items-center gap-8 px-4 py-8 md:px-8 lg:grid-cols-[minmax(0,1fr)_480px] lg:py-16">
           <div className="relative hidden min-h-[520px] overflow-hidden rounded-lg border border-white/10 bg-[#101010] p-8 shadow-2xl shadow-black/40 lg:block">
             <div className="absolute inset-x-0 top-0 h-1 bg-[#b20711]" />
             <Image
@@ -47,7 +49,7 @@ export default async function LoginPage({ searchParams }: { searchParams?: Promi
                 />
                 <div className="mt-14 max-w-xl">
                   <p className="text-sm font-medium uppercase text-[#e50913]">Secure event access</p>
-                  <h1 className="mt-4 text-5xl font-semibold leading-tight text-white">Welcome back to FCF Events</h1>
+                  <h1 className="mt-4 text-4xl font-semibold leading-tight text-white xl:text-5xl">Welcome back to FCF Events</h1>
                   <p className="mt-5 max-w-md text-base leading-7 text-[#bbbbbb]">
                     Organizer and attendee access for Federation event operations.
                   </p>
@@ -100,15 +102,14 @@ export default async function LoginPage({ searchParams }: { searchParams?: Promi
                   <Label htmlFor="password">Password</Label>
                   <div className="relative">
                     <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#777777]" aria-hidden />
-                    <Input
+                    <PasswordInput
                       id="password"
                       name="password"
-                      type="password"
                       placeholder="Password"
                       autoComplete="current-password"
                       disabled={!configured}
                       required
-                      className="h-12 border-white/15 bg-[#080808] pl-10"
+                      className="h-12 border-white/15 bg-[#080808] pl-10 pr-12"
                     />
                   </div>
                 </div>

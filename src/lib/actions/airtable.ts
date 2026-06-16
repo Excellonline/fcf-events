@@ -1,12 +1,15 @@
 "use server";
 
 import { isServiceRoleConfigured } from "@/lib/env";
+import { requireDashboardAccess } from "@/lib/auth";
+import { runAirtableSyncJob } from "@/lib/airtable/sync";
 import { airtableSettingsSchema } from "@/lib/validation";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { encryptSecret } from "@/lib/security/encryption";
 import { writeAuditLog } from "@/lib/audit";
 
 export async function saveAirtableSettings(input: FormData) {
+  const access = await requireDashboardAccess(["owner", "admin"]);
   const parsed = airtableSettingsSchema.safeParse({
     organizationId: input.get("organizationId"),
     apiToken: input.get("apiToken") || undefined,
@@ -19,6 +22,10 @@ export async function saveAirtableSettings(input: FormData) {
   });
 
   if (!parsed.success) return { ok: false, message: parsed.error.issues[0]?.message ?? "Invalid Airtable settings." };
+  if (parsed.data.organizationId !== access.organizationId) {
+    return { ok: false, message: "Airtable organization does not match your access." };
+  }
+
   if (!isServiceRoleConfigured()) return { ok: true, message: "Airtable settings validated. Connect Supabase to save them." };
 
   const values = parsed.data;
@@ -48,13 +55,10 @@ export async function saveAirtableSettings(input: FormData) {
 }
 
 export async function runAirtableSync(organizationId: string) {
-  if (!isServiceRoleConfigured()) return { ok: true, message: "Sync request validated. Connect Supabase to record sync logs." };
-  const supabase = createSupabaseAdminClient();
-  await supabase.from("airtable_sync_logs").insert({
-    organization_id: organizationId,
-    entity_type: "manual_sync",
-    status: "skipped",
-    error_message: "TODO_EXTERNAL_PROVIDER_REQUIRED: complete field mappings and token before production sync.",
-  });
-  return { ok: true, message: "Sync log created. Complete mappings before production sync." };
+  const access = await requireDashboardAccess(["owner", "admin"]);
+  if (organizationId !== access.organizationId) {
+    return { ok: false, message: "Airtable organization does not match your access." };
+  }
+
+  return runAirtableSyncJob(organizationId);
 }

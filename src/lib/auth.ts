@@ -1,12 +1,13 @@
 import { redirect } from "next/navigation";
 import { demoOrganizationId } from "@/lib/demo-data";
-import { isServiceRoleConfigured, isSupabaseConfigured } from "@/lib/env";
+import { isProduction, isServiceRoleConfigured, isSupabaseConfigured } from "@/lib/env";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import type { Role } from "@/lib/types";
 
 export const MANAGEMENT_ROLES: Role[] = ["owner", "admin"];
 export const DASHBOARD_ROLES: Role[] = ["owner", "admin", "manager", "check_in_staff", "viewer"];
+export const CHECK_IN_ONLY_ROLES: Role[] = ["check_in_staff"];
 
 export type CurrentUserAccess = {
   userId: string | null;
@@ -25,6 +26,8 @@ export type CurrentAccountUser = {
 
 export async function getCurrentUserAccess(): Promise<CurrentUserAccess | null> {
   if (!isSupabaseConfigured()) {
+    if (isProduction()) return null;
+
     return {
       userId: null,
       email: null,
@@ -66,6 +69,8 @@ export async function getCurrentUserAccess(): Promise<CurrentUserAccess | null> 
 
 export async function getCurrentAccountUser(): Promise<CurrentAccountUser | null> {
   if (!isSupabaseConfigured()) {
+    if (isProduction()) return null;
+
     return {
       userId: null,
       email: "maya@example.com",
@@ -105,7 +110,8 @@ export async function getCurrentAccountUser(): Promise<CurrentAccountUser | null
 }
 
 export async function getPostLoginRedirect(userId: string | null) {
-  if (!isServiceRoleConfigured() || !userId) return "/dashboard";
+  if (!userId) return "/dashboard";
+  if (!isServiceRoleConfigured()) return isProduction() ? "/account" : "/dashboard";
 
   const supabase = createSupabaseAdminClient();
   const { data: membership } = await supabase
@@ -116,7 +122,8 @@ export async function getPostLoginRedirect(userId: string | null) {
     .eq("is_active", true)
     .maybeSingle();
 
-  return membership ? "/dashboard" : "/account";
+  if (!membership) return "/account";
+  return CHECK_IN_ONLY_ROLES.includes(membership.role as Role) ? "/dashboard/check-in" : "/dashboard";
 }
 
 export async function requireDashboardAccess(allowedRoles: Role[] = DASHBOARD_ROLES) {
@@ -135,8 +142,17 @@ export async function requireDashboardAccess(allowedRoles: Role[] = DASHBOARD_RO
   }
 
   if (!allowedRoles.includes(access.role)) {
-    redirect("/dashboard");
+    redirect(CHECK_IN_ONLY_ROLES.includes(access.role) ? "/dashboard/check-in" : "/dashboard");
   }
+
+  return access;
+}
+
+export async function getAuthorizedDashboardAccess(allowedRoles: Role[] = DASHBOARD_ROLES) {
+  const access = await getCurrentUserAccess();
+
+  if (!access?.role) return null;
+  if (!allowedRoles.includes(access.role)) return null;
 
   return access;
 }

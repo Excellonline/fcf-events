@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { env } from "@/lib/env";
 import { processZeffyCompletedPayment } from "@/lib/payments/zeffy";
+import { isAuthorizedSharedSecret, readJsonBody } from "@/lib/security/request";
 import type { ZeffyPaymentCompletedEvent } from "@/lib/zeffy";
 
 export async function POST(request: Request) {
@@ -8,12 +9,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, message: "Unauthorized webhook." }, { status: 401 });
   }
 
-  let payload: ZeffyPaymentCompletedEvent;
-  try {
-    payload = (await request.json()) as ZeffyPaymentCompletedEvent;
-  } catch {
-    return NextResponse.json({ ok: false, message: "Invalid JSON payload." }, { status: 400 });
-  }
+  const parsedPayload = await readJsonBody(request);
+  if (!parsedPayload.ok) return parsedPayload.response;
+
+  const payload = parsedPayload.data as ZeffyPaymentCompletedEvent;
 
   if (payload.type !== "payment.completed" || !payload.data) {
     return NextResponse.json({ ok: true, matched: false, message: "Ignored unsupported Zeffy event." });
@@ -35,9 +34,5 @@ export async function POST(request: Request) {
 }
 
 function isAuthorizedWebhook(request: Request) {
-  if (!env.zeffyWebhookSecret) return true;
-
-  const url = new URL(request.url);
-  const suppliedSecret = request.headers.get("x-zeffy-webhook-secret") ?? url.searchParams.get("token");
-  return suppliedSecret === env.zeffyWebhookSecret;
+  return isAuthorizedSharedSecret(request, env.zeffyWebhookSecret, "x-zeffy-webhook-secret");
 }

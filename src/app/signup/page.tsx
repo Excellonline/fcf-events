@@ -2,6 +2,7 @@ import Image from "next/image";
 import { ArrowRight, KeyRound, Mail, UserRound } from "lucide-react";
 import { PublicFooter } from "@/components/public-footer";
 import { PublicHeader } from "@/components/public-header";
+import { PasswordInput } from "@/components/password-input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,6 +18,7 @@ const messages: Record<string, string> = {
 const errors: Record<string, string> = {
   invalid: "Check your name, email, and matching password.",
   signup: "Could not create that account. Try signing in or use another email.",
+  rate_limited: "Too many signup attempts. Please wait a bit and try again.",
 };
 
 export default async function SignupPage({
@@ -33,7 +35,7 @@ export default async function SignupPage({
   return (
     <main className="min-h-screen bg-[#0b0b0b] text-white">
       <PublicHeader showLogin />
-      <section className="mx-auto grid min-h-[72vh] max-w-7xl items-center gap-8 px-4 py-10 md:px-8 lg:grid-cols-[minmax(0,1fr)_460px] lg:py-16">
+      <section className="mx-auto grid min-h-[72vh] max-w-7xl items-center gap-8 px-4 py-8 md:px-8 lg:grid-cols-[minmax(0,1fr)_460px] lg:py-16">
         <div className="relative hidden min-h-[480px] overflow-hidden rounded-lg border border-white/10 bg-[#101010] p-8 lg:block">
           <Image
             src="/brand/fcf-mark-red.png"
@@ -45,14 +47,14 @@ export default async function SignupPage({
           />
           <div className="relative z-10 max-w-xl">
             <p className="text-sm font-medium uppercase text-[#e50913]">Attendee account</p>
-            <h1 className="mt-4 text-5xl font-semibold leading-tight">Keep your FCF tickets together</h1>
+            <h1 className="mt-4 text-4xl font-semibold leading-tight xl:text-5xl">Keep your FCF tickets together</h1>
             <p className="mt-5 text-base leading-7 text-[#bbbbbb]">
               Use the same email from registration and set a password so your tickets appear in your account.
             </p>
           </div>
         </div>
 
-        <Card className="border-white/15 bg-[#111111]/95">
+        <Card className="w-full border-white/15 bg-[#111111]/95">
           <CardHeader className="space-y-3 p-6 pb-2">
             <div className="flex h-11 w-11 items-center justify-center rounded-md border border-white/10 bg-[#1a1a1a]">
               <UserRound className="h-5 w-5 text-[#e50913]" aria-hidden />
@@ -91,12 +93,11 @@ export default async function SignupPage({
               <Field label="Password">
                 <div className="relative">
                   <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#777777]" aria-hidden />
-                  <Input
+                  <PasswordInput
                     name="password"
-                    type="password"
                     autoComplete="new-password"
                     minLength={12}
-                    className="h-12 border-white/15 bg-[#080808] pl-10"
+                    className="h-12 border-white/15 bg-[#080808] pl-10 pr-12"
                     required
                   />
                 </div>
@@ -104,12 +105,11 @@ export default async function SignupPage({
               <Field label="Confirm password">
                 <div className="relative">
                   <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#777777]" aria-hidden />
-                  <Input
+                  <PasswordInput
                     name="confirmPassword"
-                    type="password"
                     autoComplete="new-password"
                     minLength={12}
-                    className="h-12 border-white/15 bg-[#080808] pl-10"
+                    className="h-12 border-white/15 bg-[#080808] pl-10 pr-12"
                     required
                   />
                 </div>

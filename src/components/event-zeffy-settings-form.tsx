@@ -42,7 +42,7 @@ export function EventZeffySettingsForm({ event }: { event: EventSummary }) {
       </Field>
       <Button type="submit" disabled={isPending}>
         <Save className="h-4 w-4" aria-hidden />
-        {isPending ? "Saving" : "Save Zeffy"}
+        {isPending ? "Syncing" : "Save & Sync"}
       </Button>
     </form>
   );

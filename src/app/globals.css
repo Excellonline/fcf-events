@@ -26,10 +26,38 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-geist-sans), "Century Gothic", Arial, Helvetica, sans-serif;
+  overflow-x: hidden;
+  text-wrap: pretty;
 }
 
 * {
   box-sizing: border-box;
+}
+
+html {
+  overflow-x: hidden;
+}
+
+img,
+svg,
+video,
+canvas {
+  max-width: 100%;
+}
+
+p,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+dd,
+dt,
+li,
+span,
+a {
+  overflow-wrap: anywhere;
 }
 
 a {

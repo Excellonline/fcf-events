@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 export function PublicHeader({ signupHref = "/#events", showLogin = true }: { signupHref?: string; showLogin?: boolean }) {
   return (
     <header className="sticky top-0 z-20 border-b border-white/10 bg-[#0b0b0b]/95 backdrop-blur">
-      <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-4 md:px-8">
+      <div className="mx-auto flex max-w-7xl items-center justify-between gap-2 px-3 py-3 min-[380px]:gap-3 min-[380px]:px-4 md:px-8 md:py-4">
         <Link href="/" className="flex min-w-0 items-center gap-3">
           <Image
             src="/brand/fcf-wordmark-white.png"
@@ -14,21 +14,22 @@ export function PublicHeader({ signupHref = "/#events", showLogin = true }: { si
             width={260}
             height={61}
             priority
-            className="h-auto w-32 min-[420px]:w-40 sm:w-52"
+            className="h-auto w-28 min-[380px]:w-36 min-[460px]:w-40 sm:w-52"
           />
         </Link>
-        <nav className="flex shrink-0 items-center gap-1 min-[380px]:gap-2">
+        <nav className="flex min-w-0 shrink-0 items-center gap-1 min-[380px]:gap-2">
           {showLogin ? (
-            <Button asChild variant="ghost" size="sm">
-              <Link href="/login">
+            <Button asChild variant="ghost" size="sm" className="px-2 min-[380px]:px-3">
+              <Link href="/login" aria-label="Log in">
                 <LogIn className="h-4 w-4" aria-hidden />
-                Log in
+                <span className="hidden min-[410px]:inline">Log in</span>
               </Link>
             </Button>
           ) : null}
-          <Button asChild size="sm">
+          <Button asChild size="sm" className="px-2 min-[380px]:px-3">
             <Link href={signupHref}>
-              Sign up
+              <span className="min-[360px]:hidden">Join</span>
+              <span className="hidden min-[360px]:inline">Sign up</span>
               <ArrowRight className="h-4 w-4" aria-hidden />
             </Link>
           </Button>

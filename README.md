@@ -28,10 +28,20 @@ npm run dev
 
 Open `http://localhost:3000`.
 
+## Android Check-in App
+The admin-only check-in companion app lives in `apps/admin-checkin`. It uses Expo and reuses the web app check-in APIs.
+
+```bash
+npm run mobile:checkin:android
+```
+
+Copy `apps/admin-checkin/.env.example` to `apps/admin-checkin/.env` before running it.
+
 ## Verify
 ```bash
 npm run lint
 npm run build
+npm run mobile:checkin:typecheck
 ```
 
 ## Setup

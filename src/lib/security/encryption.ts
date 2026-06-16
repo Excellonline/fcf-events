@@ -5,7 +5,12 @@ function getKeyMaterial() {
     throw new Error("APP_ENCRYPTION_KEY is required before storing provider secrets.");
   }
 
-  return Buffer.from(env.encryptionKey, "base64").subarray(0, 32);
+  const key = Buffer.from(env.encryptionKey, "base64");
+  if (key.length < 32) {
+    throw new Error("APP_ENCRYPTION_KEY must be a base64-encoded 32-byte key.");
+  }
+
+  return key.subarray(0, 32);
 }
 
 export async function encryptSecret(value: string) {
@@ -30,7 +35,6 @@ export async function decryptSecret(value: string) {
 
 export function maskSecret(value?: string | null) {
   if (!value) return "Not configured";
-  if (value.length <= 8) return "••••••••";
-  return `${value.slice(0, 4)}••••${value.slice(-4)}`;
+  if (value.length <= 8) return "********";
+  return `${value.slice(0, 4)}****${value.slice(-4)}`;
 }
-

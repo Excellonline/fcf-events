@@ -3,6 +3,7 @@ import Link from "next/link";
 
 const legalLinks = [
   { href: "/features", label: "Features" },
+  { href: "/past-events", label: "Past events" },
   { href: "/legal/terms", label: "Terms" },
   { href: "/legal/privacy", label: "Privacy" },
   { href: "/legal/communications", label: "CASL & SMS" },

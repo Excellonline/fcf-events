@@ -8,7 +8,7 @@ import { TicketTypeManager } from "@/components/ticket-type-manager";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { getEventAttendees, getEventBySlug, getSessions, getTicketTypes } from "@/lib/data";
+import { getEventAttendees, getEventBySlug, getEventDays, getSessions, getTicketTypes } from "@/lib/data";
 import { eventLocationLabel, googleMapsSearchUrl } from "@/lib/utils";
 
 export default async function EventDetailPage({ params }: { params: Promise<{ slug: string }> }) {
@@ -16,7 +16,8 @@ export default async function EventDetailPage({ params }: { params: Promise<{ sl
   const event = await getEventBySlug(slug);
   if (!event) notFound();
 
-  const [sessions, ticketTypes, attendees] = await Promise.all([
+  const [eventDays, sessions, ticketTypes, attendees] = await Promise.all([
+    getEventDays(event.id),
     getSessions(event.id),
     getTicketTypes(event.id),
     getEventAttendees(event.id),
@@ -110,10 +111,31 @@ export default async function EventDetailPage({ params }: { params: Promise<{ sl
             <CardTitle>Ticket Types</CardTitle>
           </CardHeader>
           <CardContent>
-            <TicketTypeManager eventId={event.id} ticketTypes={ticketTypes} />
+            <TicketTypeManager eventId={event.id} eventDays={eventDays} ticketTypes={ticketTypes} />
           </CardContent>
         </Card>
       </div>
+      <Card className="mt-4">
+        <CardHeader>
+          <CardTitle>Event Days</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-3 md:grid-cols-2">
+          {eventDays.length ? (
+            eventDays.map((day) => (
+              <div key={day.id} className="rounded-md border border-white/10 p-4">
+                <p className="font-medium text-white">{day.label}</p>
+                <p className="mt-1 text-sm text-[#999999]">
+                  {formatDateTime(day.starts_at)} - {formatDateTime(day.ends_at)}
+                </p>
+              </div>
+            ))
+          ) : (
+            <div className="rounded-md border border-dashed border-white/15 p-4 text-sm text-[#999999]">
+              Save this event to generate event days.
+            </div>
+          )}
+        </CardContent>
+      </Card>
       <Card id="edit-event" className="mt-4 scroll-mt-6">
         <CardHeader>
           <CardTitle>Edit Event</CardTitle>
@@ -129,8 +151,15 @@ export default async function EventDetailPage({ params }: { params: Promise<{ sl
             <Badge variant="muted">{attendees.length} registered</Badge>
           </div>
         </CardHeader>
-        <CardContent className="overflow-x-auto">
+        <CardContent className="space-y-3">
           {attendees.length ? (
+            <>
+            <div className="space-y-3 md:hidden">
+              {attendees.map((attendee) => (
+                <EventAttendeeMobileCard key={attendee.registration_id} attendee={attendee} />
+              ))}
+            </div>
+            <div className="hidden overflow-x-auto md:block">
             <table className="w-full min-w-[920px] text-left text-sm">
               <thead className="text-[#999999]">
                 <tr className="border-b border-white/10">
@@ -182,6 +211,8 @@ export default async function EventDetailPage({ params }: { params: Promise<{ sl
                 ))}
               </tbody>
             </table>
+            </div>
+            </>
           ) : (
             <div className="rounded-md border border-white/10 px-4 py-8 text-sm text-[#999999]">
               No attendees have registered for this event yet.
@@ -227,6 +258,42 @@ function Info({ label, value }: { label: string; value: React.ReactNode }) {
     <div>
       <p className="text-sm text-[#999999]">{label}</p>
       <div className="mt-1 text-sm text-white">{value}</div>
+    </div>
+  );
+}
+
+function EventAttendeeMobileCard({ attendee }: { attendee: Awaited<ReturnType<typeof getEventAttendees>>[number] }) {
+  return (
+    <div className="rounded-md border border-white/10 bg-[#0b0b0b] p-3">
+      <div className="flex min-w-0 flex-col gap-3">
+        <div className="min-w-0">
+          <p className="font-medium text-white">{attendee.full_name}</p>
+          <p className="mt-1 text-sm text-[#999999]">{attendee.role_title ?? "No role listed"}</p>
+        </div>
+
+        <dl className="grid gap-2 text-sm">
+          <div>
+            <dt className="text-xs uppercase tracking-[0.12em] text-[#666666]">Company</dt>
+            <dd className="text-[#dddddd]">{attendee.company ?? "No company"}</dd>
+          </div>
+          <div>
+            <dt className="text-xs uppercase tracking-[0.12em] text-[#666666]">Contact</dt>
+            <dd className="break-all text-[#999999]">{attendee.email ?? "No email"}</dd>
+            <dd className="text-[#999999]">{attendee.phone ?? "No phone"}</dd>
+          </div>
+          <div>
+            <dt className="text-xs uppercase tracking-[0.12em] text-[#666666]">Ticket</dt>
+            <dd className="text-[#dddddd]">{attendee.ticket_type_name ?? "No ticket type"}</dd>
+            <dd className="break-all font-mono text-[#999999]">{attendee.ticket_code ?? "No ticket issued"}</dd>
+          </div>
+        </dl>
+
+        <div className="flex flex-wrap gap-2">
+          <StatusBadge status={attendee.registration_status} />
+          <PaymentBadge status={attendee.payment_status} />
+          {attendee.checked_in_at ? <Badge variant="success">Checked in</Badge> : <Badge variant="muted">Not checked in</Badge>}
+        </div>
+      </div>
     </div>
   );
 }

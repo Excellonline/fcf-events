@@ -33,7 +33,7 @@ export default function FeaturesPage() {
       <PublicHeader />
       <section className="mx-auto max-w-7xl px-4 py-12 md:px-8 md:py-16">
         <Badge className="mb-4">Platform features</Badge>
-        <h1 className="max-w-4xl text-4xl font-semibold leading-tight md:text-6xl">FCF Events operations platform</h1>
+        <h1 className="max-w-4xl text-3xl font-semibold leading-tight sm:text-4xl md:text-6xl">FCF Events operations platform</h1>
         <p className="mt-5 max-w-2xl text-base leading-7 text-[#dddddd] md:text-lg">
           The private operations layer behind FCF event registration, check-in, attendee CRM, analytics, and communications.
         </p>

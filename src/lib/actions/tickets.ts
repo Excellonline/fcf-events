@@ -1,8 +1,10 @@
 "use server";
 
+import { headers } from "next/headers";
 import { EmailConfigurationError, sendEmail } from "@/lib/email/provider";
 import { isServiceRoleConfigured } from "@/lib/env";
 import { rateLimit } from "@/lib/security/rate-limit";
+import { clientIp } from "@/lib/security/request";
 import { ticketUrl } from "@/lib/security/qr";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { getTicketDetails } from "@/lib/data";
@@ -23,6 +25,12 @@ export async function sendTicketEmail(input: unknown): Promise<TicketEmailResult
   }
 
   const values = parsed.data;
+  const headerStore = await headers();
+  const ipLimited = rateLimit(`ticket-email-ip:${clientIp(headerStore)}`, 10, 60 * 60 * 1000);
+  if (!ipLimited.allowed) {
+    return { ok: false, message: "Too many ticket email attempts. Please try again later." };
+  }
+
   const limited = rateLimit(`ticket-email:${values.ticketCode}:${values.recipientEmail}`, 3, 60 * 60 * 1000);
   if (!limited.allowed) {
     return { ok: false, message: "Too many ticket email attempts. Please try again later." };

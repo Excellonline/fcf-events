@@ -12,7 +12,13 @@ export const env = {
   zeffyApiKey: process.env.ZEFFY_API_KEY,
   zeffyWebhookSecret: process.env.ZEFFY_WEBHOOK_SECRET,
   zeffySyncSecret: process.env.ZEFFY_SYNC_SECRET,
+  twilioAuthToken: process.env.TWILIO_AUTH_TOKEN,
+  cronSecret: process.env.CRON_SECRET,
 };
+
+export function isProduction() {
+  return process.env.NODE_ENV === "production";
+}
 
 export function isSupabaseConfigured() {
   return Boolean(env.supabaseUrl && env.supabaseAnonKey);
@@ -20,6 +26,10 @@ export function isSupabaseConfigured() {
 
 export function isServiceRoleConfigured() {
   return Boolean(env.supabaseUrl && env.supabaseServiceRoleKey);
+}
+
+export function isDemoModeEnabled() {
+  return !isProduction() && !isServiceRoleConfigured();
 }
 
 export function requireServiceConfig() {

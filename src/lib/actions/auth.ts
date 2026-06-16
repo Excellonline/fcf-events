@@ -1,8 +1,11 @@
 "use server";
 
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { getPostLoginRedirect } from "@/lib/auth";
 import { env, isServiceRoleConfigured } from "@/lib/env";
+import { rateLimit } from "@/lib/security/rate-limit";
+import { clientIp } from "@/lib/security/request";
 import { accountSignupSchema } from "@/lib/validation";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -10,6 +13,12 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 export async function signInAction(input: FormData) {
   const email = String(input.get("email") ?? "").trim().toLowerCase();
   const password = String(input.get("password") ?? "");
+  const headerStore = await headers();
+  const limited = rateLimit(`signin:${clientIp(headerStore)}:${email}`, 10, 15 * 60 * 1000);
+
+  if (!limited.allowed) {
+    redirect("/login?error=rate_limited");
+  }
 
   if (!email || !password) {
     redirect("/login?error=missing_credentials");
@@ -31,6 +40,13 @@ export async function signInAction(input: FormData) {
 export async function signUpAction(input: FormData) {
   const redirectTo = safeLocalRedirect(String(input.get("redirect") ?? "/account"));
   const email = String(input.get("email") ?? "").trim().toLowerCase();
+  const headerStore = await headers();
+  const limited = rateLimit(`signup:${clientIp(headerStore)}:${email}`, 5, 60 * 60 * 1000);
+
+  if (!limited.allowed) {
+    redirect(signupRedirect({ error: "rate_limited", email, redirectTo }));
+  }
+
   const parsed = accountSignupSchema.safeParse({
     fullName: input.get("fullName"),
     email,
