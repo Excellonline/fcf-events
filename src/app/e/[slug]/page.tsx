@@ -1,7 +1,9 @@
 import { notFound } from "next/navigation";
+import Link from "next/link";
 import { CalendarDays, ExternalLink, MapPin, ShieldCheck, Ticket } from "lucide-react";
 import { AddToCalendarButton } from "@/components/add-to-calendar-button";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { RegistrationForm } from "@/components/registration-form";
 import { PublicFooter } from "@/components/public-footer";
@@ -17,10 +19,11 @@ export default async function PublicEventPage({ params }: { params: Promise<{ sl
   const [eventDays, sessions, ticketTypes] = await Promise.all([getEventDays(event.id), getSessions(event.id), getTicketTypes(event.id)]);
   const locationLabel = eventLocationLabel(event.venue_name, event.address) || "Venue TBA";
   const mapsHref = event.address?.trim() ? googleMapsSearchUrl(locationLabel) : null;
+  const hasEnded = new Date(event.ends_at) < new Date();
 
   return (
     <main className="min-h-screen bg-[#0b0b0b] text-white">
-      <PublicHeader signupHref="#register" />
+      <PublicHeader signupHref={hasEnded ? "/#events" : "#register"} />
       <section className="border-b border-white/10">
         <div className="mx-auto grid max-w-7xl gap-8 px-4 py-8 md:grid-cols-[minmax(0,1fr)_minmax(0,0.8fr)] md:px-8 md:py-12">
           <div className="min-w-0">
@@ -54,7 +57,29 @@ export default async function PublicEventPage({ params }: { params: Promise<{ sl
             </Card>
           </div>
           <div id="register" className="min-w-0">
-            <RegistrationForm event={event} eventDays={eventDays} ticketTypes={ticketTypes} sessions={sessions} />
+            {hasEnded ? (
+              <Card>
+                <CardHeader>
+                  <Badge variant="muted" className="w-fit">Past event</Badge>
+                  <CardTitle>Registration closed</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm leading-6 text-[#999999]">
+                    This event has ended. Upcoming events are still available for registration.
+                  </p>
+                  <div className="mt-5 flex flex-col gap-3 sm:flex-row">
+                    <Button asChild className="w-full sm:w-auto">
+                      <Link href="/#events">Upcoming events</Link>
+                    </Button>
+                    <Button asChild variant="outline" className="w-full sm:w-auto">
+                      <Link href="/past-events">Past events</Link>
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : (
+              <RegistrationForm event={event} eventDays={eventDays} ticketTypes={ticketTypes} sessions={sessions} />
+            )}
           </div>
         </div>
       </section>
