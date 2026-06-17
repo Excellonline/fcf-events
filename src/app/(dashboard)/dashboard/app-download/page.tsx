@@ -9,6 +9,7 @@ import { requireDashboardAccess } from "@/lib/auth";
 export const dynamic = "force-dynamic";
 
 const apkPath = "/downloads/fcf-checkin.apk";
+const apkReleasedAt = "2026-06-16T22:32:00-04:00";
 
 export default async function AppDownloadPage() {
   await requireDashboardAccess(["owner", "admin"]);
@@ -70,7 +71,7 @@ async function getApkInfo() {
     return {
       available: true,
       size: formatBytes(file.size),
-      updatedAt: file.mtime.toLocaleString(),
+      updatedAt: formatReleaseDate(apkReleasedAt),
     };
   } catch {
     return {
@@ -93,4 +94,12 @@ function Info({ label, value }: { label: string; value: string }) {
 function formatBytes(bytes: number) {
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatReleaseDate(value: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "America/Toronto",
+  }).format(new Date(value));
 }
